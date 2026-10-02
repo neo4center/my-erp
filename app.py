@@ -284,7 +284,7 @@ MENU_STOCK = "📊 재고 현황판"
 MENU_TRANS = "📝 입출고 등록"
 MENU_ITEMS = "🏷️ 품목 관리"
 MENU_HISTORY = "🔍 입출고 내역 조회"
-MENU_RATES = "⚙️ 환율 설정"
+MENU_RATES = "⚙️️ 환율 설정"
 
 menu_list = [MENU_STOCK, MENU_TRANS, MENU_ITEMS, MENU_HISTORY, MENU_RATES]
 if user.get("is_admin") == 1:
@@ -411,11 +411,41 @@ if menu == MENU_STOCK:
     if table_rows:
         df_stock = pd.DataFrame(table_rows)
 
+        # 전체 등록 품목의 총 재고 자산 금액을 계산 (전체 아이템 및 전체 Lot 기준 총합)
+        total_all_asset_amt = 0
+        try:
+            all_items_resp = db.supabase.table("items").select("item_code, unit_price, currency, in_date").execute().data or []
+            all_lots_resp = db.get_stock_by_lots() or []
+            
+            # 빠른 매핑을 위한 딕셔너리 구성
+            all_lot_map = {}
+            for l in all_lots_resp:
+                ic = l.get("item_code")
+                if ic not in all_lot_map:
+                    all_lot_map[ic] = []
+                all_lot_map[ic].append(l)
+
+            for item in all_items_resp:
+                ic = item.get("item_code")
+                curr = safe_str_clean(item.get("currency"), "KRW")
+                base_price = safe_float(item.get("unit_price"), 0.0)
+                base_in_date = item.get("in_date", str(datetime.date.today()))
+                
+                ilots = all_lot_map.get(ic, [])
+                if ilots:
+                    for l in ilots:
+                        l_qty = safe_int_clean(l.get("current_qty"), 0)
+                        l_price = safe_float(l.get("unit_price"), base_price)
+                        l_date = l.get("inbound_date", base_in_date)
+                        l_year = get_year_from_date(l_date)
+                        l_rate = get_exchange_rate_by_year(curr, l_year)
+                        total_all_asset_amt += round((l_price * l_rate) * l_qty)
+        except Exception:
+            total_all_asset_amt = round(df_stock["재고금액"].sum()) if not df_stock.empty else 0
+
         col1, col2, col3 = st.columns([2, 2, 2])
         col1.metric("전체 등록 품목 수", f"{total_count} 개 (현재 {current_page}페이지 표시중)")
-        
-        # 전체 자산 금액 대략 산출 (원활한 출력을 위해 현재 페이지 기준 또는 전체 집계 가능)
-        col2.metric("현재 페이지 품목/Lot 수", f"{len(df_stock)} 행")
+        col2.metric("총 재고 자산 금액", f"{total_all_asset_amt:,.0f} 원")
 
         out_excel = io.BytesIO()
         with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
@@ -590,7 +620,7 @@ elif menu == MENU_ITEMS:
                         st.rerun()
 
     with tab2:
-        st.markdown("#### ✏️ 기존 품목 정보 수정")
+        st.markdown("#### ✏️️ 기존 품목 정보 수정")
         edit_search = st.text_input("🔍 수정할 품목 검색 (품명, 코드, 규격, Maker 등)", "", key="edit_search_box")
         
         try:
@@ -1002,7 +1032,7 @@ elif menu == "👥 사용자 관리 (관리자)":
             sel_del_label = st.selectbox("삭제할 사용자 계정 선택:", list(del_opts.keys()))
             target_del_emp = del_opts[sel_del_label]
 
-            st.warning(f"⚠️️ 선택한 계정 (`{target_del_emp}`)을 삭제하시겠습니까? 삭제된 계정은 복구할 수 없습니다.")
+            st.warning(f"⚠ 선택한 계정 (`{target_del_emp}`)을 삭제하시겠습니까? 삭제된 계정은 복구할 수 없습니다.")
             if st.button("❌ 선택 계정 즉시 삭제"):
                 if target_del_emp == user["emp_no"]:
                     st.error("현재 로그인되어 있는 본인 계정은 삭제할 수 없습니다.")
