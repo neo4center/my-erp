@@ -428,7 +428,7 @@ elif menu == "🏷️ 품목 관리":
 # 메뉴 4: 입출고 내역 조회
 # ---------------------------------------------------------
 elif menu == "🔍 입출고 내역 조회":
-    st.subheader("🔍 입출고 통합 이력 조회 (Supabase Transactions)")
+    st.subheader("🔍 입출고 통합 이력 조회 ")
     resp = db.supabase.table("stock_transactions").select("*").order("trans_date", desc=True).execute()
     df_trans = pd.DataFrame(resp.data or [])
     if not df_trans.empty:
