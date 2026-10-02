@@ -6,7 +6,7 @@ import streamlit as st
 import db_helper as db
 
 # Streamlit 설정
-st.set_page_config(page_title="자동화 ERP - Supabase Cloud", layout="wide")
+st.set_page_config(page_title="광주오포센터 자동화 ERP - Supabase Cloud", layout="wide")
 
 # ---------------------------------------------------------
 # 1. 헬퍼 함수
@@ -171,7 +171,7 @@ if st.session_state.logged_in_user is None:
 # 3. 메인 ERP 사이드바
 # ---------------------------------------------------------
 user = st.session_state.logged_in_user
-st.title("☁️ Supabase 기반 자동화 ERP")
+st.title("☁️ 광주오포센터 자동화 ERP")
 
 st.sidebar.markdown(f"👤 접속자: **{user['name']} {user['position']}** (사번: `{user['emp_no']}`)")
 if st.sidebar.button("로그아웃"):
