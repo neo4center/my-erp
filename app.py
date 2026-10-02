@@ -81,7 +81,6 @@ def get_exchange_rate(currency, year=None):
     return 1.0
 
 def render_a4_spec_card(item_code):
-    """Supabase 데이터를 활용해 A4 스타일 상세 명세서 카드 출력 (분류 항목 통합)"""
     item_resp = db.supabase.table("items").select("*").eq("item_code", item_code).execute()
     if not item_resp.data:
         return
@@ -227,7 +226,7 @@ MENU_STOCK = "📊 재고 현황판"
 MENU_TRANS = "📝 입출고 등록"
 MENU_ITEMS = "🏷️ 품목 관리"
 MENU_HISTORY = "🔍 입출고 내역 조회"
-MENU_RATES = "⚙️ 환율 설정"
+MENU_RATES = "⚙️️ 환율 설정"
 
 menu_list = [MENU_STOCK, MENU_TRANS, MENU_ITEMS, MENU_HISTORY, MENU_RATES]
 if user.get("is_admin") == 1:
@@ -279,7 +278,6 @@ if menu == MENU_STOCK:
         col1, col2, col3 = st.columns([2, 2, 2])
         col1.metric("조회된 Lot 수", f"{len(df_stock)} 개")
         
-        # 총 재고 자산 반올림 적용
         total_asset_rounded = round(df_stock["재고금액"].sum()) if not df_stock.empty else 0
         col2.metric("총 재고 자산", f"{total_asset_rounded:,.0f} 원")
 
@@ -779,14 +777,14 @@ elif menu == "👥 사용자 관리 (관리자)":
     
     if users_data:
         df_users = pd.DataFrame(users_data)
-        df_users.rename(columns={
+        df_users_display = df_users.rename(columns={
             "emp_no": "사번",
             "name": "이름",
             "position": "직급",
             "is_admin": "관리자권한",
             "created_at": "등록일시"
-        }, inplace=True)
-        st.dataframe(df_users, use_container_width=True)
+        })
+        st.dataframe(df_users_display, use_container_width=True)
     
     tab_user1, tab_user2, tab_user3 = st.tabs(["➕ 신규 사용자 추가", "✏️ 계정 정보 수정", "🗑 계정 삭제"])
 
@@ -813,19 +811,20 @@ elif menu == "👥 사용자 관리 (관리자)":
 
     with tab_user2:
         if users_data:
-            user_opts = {f"[{u['사번']}] {u['이름']} ({u['직급']})": u for u in users_data}
+            # 원본 영문 딕셔너리(users_data) 기반으로 셀렉트박스 옵션 생성 (KeyError 원인 해결)
+            user_opts = {f"[{u['emp_no']}] {u['name']} ({u['position']})": u for u in users_data}
             sel_u_label = st.selectbox("수정할 사용자 선택:", list(user_opts.keys()))
             target_u = user_opts[sel_u_label]
 
             with st.form("edit_user_form"):
-                st.markdown(f"#### 📌 [{target_u['사번']}] 계정 수정")
+                st.markdown(f"#### 📌 [{target_u['emp_no']}] 계정 수정")
                 col1, col2 = st.columns(2)
                 edit_pw = col1.text_input("새 비밀번호 (변경 시만 입력)")
-                edit_name = col2.text_input("이름", value=target_u["이름"])
+                edit_name = col2.text_input("이름", value=target_u["name"])
                 
                 col3, col4 = st.columns(2)
-                edit_pos = col3.selectbox("직급", POSITIONS, index=POSITIONS.index(target_u["직급"]) if target_u["직급"] in POSITIONS else 0)
-                edit_admin = col4.checkbox("관리자 권한", value=bool(target_u.get("관리자권한")))
+                edit_pos = col3.selectbox("직급", POSITIONS, index=POSITIONS.index(target_u["position"]) if target_u["position"] in POSITIONS else 0)
+                edit_admin = col4.checkbox("관리자 권한", value=bool(target_u.get("is_admin")))
 
                 if st.form_submit_button("사용자 정보 수정 저장"):
                     with st.spinner("⏳ 사용자 정보 수정 중..."):
@@ -837,13 +836,13 @@ elif menu == "👥 사용자 관리 (관리자)":
                         if edit_pw.strip():
                             update_payload["password"] = edit_pw.strip()
 
-                        db.supabase.table("users").update(update_payload).eq("emp_no", target_u["사번"]).execute()
-                        st.success(f"✅ [{target_u['사번']}] 사용자 정보가 성공적으로 수정되었습니다.")
+                        db.supabase.table("users").update(update_payload).eq("emp_no", target_u["emp_no"]).execute()
+                        st.success(f"✅ [{target_u['emp_no']}] 사용자 정보가 성공적으로 수정되었습니다.")
                         st.rerun()
 
     with tab_user3:
         if users_data:
-            del_opts = {f"[{u['사번']}] {u['이름']} ({u['직급']})": u['사번'] for u in users_data}
+            del_opts = {f"[{u['emp_no']}] {u['name']} ({u['position']})": u['emp_no'] for u in users_data}
             sel_del_label = st.selectbox("삭제할 사용자 계정 선택:", list(del_opts.keys()))
             target_del_emp = del_opts[sel_del_label]
 
