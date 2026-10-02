@@ -5,8 +5,8 @@ import pandas as pd
 import streamlit as st
 import db_helper as db
 
-# Streamlit 설정
-st.set_page_config(page_title="광주오포센터 자동화 ERP - Supabase Cloud", layout="wide")
+# Streamlit 기본 설정
+st.set_page_config(page_title="광주오포센터 자동화 ERP", layout="wide")
 
 # ---------------------------------------------------------
 # 1. 헬퍼 함수
@@ -77,8 +77,8 @@ def render_a4_spec_card(item_code):
     # 입출고 이력
     trans_resp = db.supabase.table("stock_transactions").select("*").eq("item_code", item_code).order("trans_date", desc=True).execute()
     trans_data = trans_resp.data or []
-    df_in = pd.DataFrame([t for t in trans_data if t["trans_type"] == "IN"])
-    df_out = pd.DataFrame([t for t in trans_data if t["trans_type"] == "OUT"])
+    df_in = pd.DataFrame([t for t in trans_data if t["trans_type"] in ["IN", "입고"]])
+    df_out = pd.DataFrame([t for t in trans_data if t["trans_type"] in ["OUT", "출고"]])
 
     st.markdown("""
     <style>
@@ -119,13 +119,15 @@ def render_a4_spec_card(item_code):
         st.markdown("---")
         st.markdown("### 📥 1. 입고 내역 (History)")
         if not df_in.empty:
-            st.dataframe(df_in[['trans_date', 'quantity', 'unit_price', 'manager', 'requester', 'remark']], use_container_width=True)
+            cols_show = [c for c in ['trans_date', 'quantity', 'unit_price', 'manager', 'requester', 'remark'] if c in df_in.columns]
+            st.dataframe(df_in[cols_show], use_container_width=True)
         else:
             st.caption("※ 입고 내역이 없습니다.")
 
         st.markdown("### 📤 2. 출고 내역 (History)")
         if not df_out.empty:
-            st.dataframe(df_out[['trans_date', 'quantity', 'unit_price', 'manager', 'requester', 'remark']], use_container_width=True)
+            cols_show = [c for c in ['trans_date', 'quantity', 'unit_price', 'manager', 'requester', 'remark'] if c in df_out.columns]
+            st.dataframe(df_out[cols_show], use_container_width=True)
         else:
             st.caption("※ 출고 내역이 없습니다.")
 
@@ -138,7 +140,7 @@ if "logged_in_user" not in st.session_state:
     st.session_state.logged_in_user = None
 
 if st.session_state.logged_in_user is None:
-    st.title("🔐 자동화 ERP - 로그인")
+    st.title("🔐 광주오포센터 자동화 ERP - 로그인")
     with st.form("login_form"):
         emp_no = st.text_input("사번 (ID) (*필수)")
         pw = st.text_input("비밀번호 (PW) (*필수)", type="password")
@@ -146,7 +148,6 @@ if st.session_state.logged_in_user is None:
         
         if submitted:
             if emp_no.strip() and pw.strip():
-                # Supabase DB의 users 테이블 검증
                 resp = db.supabase.table("users").select("*").eq("emp_no", emp_no.strip()).eq("password", pw.strip()).execute()
                 if resp.data:
                     u = resp.data[0]
@@ -158,7 +159,7 @@ if st.session_state.logged_in_user is None:
                     }
                     st.success(f"환영합니다, {u['name']} {u['position']}님!")
                     st.rerun()
-                elif emp_no == "admin" and pw == "admin": # 기본 관리자 백업
+                elif emp_no == "admin" and pw == "admin":
                     st.session_state.logged_in_user = {"emp_no": "admin", "name": "시스템관리자", "position": "팀장", "is_admin": 1}
                     st.rerun()
                 else:
@@ -171,7 +172,7 @@ if st.session_state.logged_in_user is None:
 # 3. 메인 ERP 사이드바
 # ---------------------------------------------------------
 user = st.session_state.logged_in_user
-st.title("☁️ 광주오포센터 자동화 ERP")
+st.title("🏭 광주오포센터 자동화 ERP")
 
 st.sidebar.markdown(f"👤 접속자: **{user['name']} {user['position']}** (사번: `{user['emp_no']}`)")
 if st.sidebar.button("로그아웃"):
@@ -186,7 +187,7 @@ if user.get("is_admin") == 1:
 menu = st.sidebar.radio("메뉴 이동:", menu_list)
 
 # ---------------------------------------------------------
-# 메뉴 1: 재고 현황판 (통합 검색 및 A4 명세서)
+# 메뉴 1: 재고 현황판
 # ---------------------------------------------------------
 if menu == "📊 재고 현황판":
     st.subheader("📊 현재 품목별/Lot별 재고 현황판")
@@ -194,7 +195,6 @@ if menu == "📊 재고 현황판":
 
     search_kw = st.text_input("🔍 통합 검색 (품명, 코드, 상세번호, 규격, 구분, 구역, Maker 등)", "")
 
-    # Supabase 조인 데이터 가져오기
     lots_data = db.get_stock_by_lots()
     
     if lots_data:
@@ -231,7 +231,6 @@ if menu == "📊 재고 현황판":
         col1.metric("조회된 Lot 수", f"{len(df_stock)} 개")
         col2.metric("총 재고 자산", f"{df_stock['재고금액'].sum():,} 원")
 
-        # 엑셀 다운로드
         out_excel = io.BytesIO()
         with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
             df_stock.drop(columns=["사진"], errors="ignore").to_excel(writer, index=False, sheet_name="재고현황")
@@ -269,7 +268,7 @@ if menu == "📊 재고 현황판":
         st.info("등록된 재고 데이터가 없습니다.")
 
 # ---------------------------------------------------------
-# 메뉴 2: 입출고 등록 (FIFO 선입선출 자동 연동)
+# 메뉴 2: 입출고 등록
 # ---------------------------------------------------------
 elif menu == "📝 입출고 등록":
     st.subheader("📝 자재 입출고 등록 (Lot 단가 분리 & FIFO 선입선출)")
@@ -332,7 +331,7 @@ elif menu == "📝 입출고 등록":
         render_a4_spec_card(item_code)
 
 # ---------------------------------------------------------
-# 메뉴 3: 품목 관리 (개별 등록, 수정, 엑셀 일괄 등록)
+# 메뉴 3: 품목 관리 (개별 등록, 수정, 엑셀 일괄 등록 및 표준양식 제공)
 # ---------------------------------------------------------
 elif menu == "🏷️ 품목 관리":
     st.subheader("🏷️ 품목 등록 및 수정 관리")
@@ -413,22 +412,74 @@ elif menu == "🏷️ 품목 관리":
                     st.rerun()
 
     with tab3:
-        uploaded_excel = st.file_uploader("📂 엑셀 파일 선택 (.xlsx)", type=["xlsx"])
+        st.markdown("#### 📂 엑셀 대량 등록 및 양식 다운로드")
+        st.caption("아래 표준 양식을 다운로드하여 작성한 후 업로드해 주세요.")
+
+        # 엑셀 표준 양식 생성
+        template_df = pd.DataFrame([{
+            "item_code": "N4_0001",
+            "item_name": "예시 자재명",
+            "item_detail_no": "ABC-123",
+            "model_spec": "SPEC-01",
+            "category_type": "소모품",
+            "category_main": "기계",
+            "category_sub": "베어링",
+            "shelf_no": "A-01",
+            "zone": "1구역",
+            "device_name": "컨베이어",
+            "maker": "한국기공",
+            "useful_life": "5년",
+            "in_date": "2026-01-01",
+            "currency": "KRW",
+            "unit_price": 50000,
+            "remark": "비고 내용 예시"
+        }])
+        
+        tpl_buffer = io.BytesIO()
+        with pd.ExcelWriter(tpl_buffer, engine="openpyxl") as writer:
+            template_df.to_excel(writer, index=False, sheet_name="품목등록양식")
+        
+        st.download_button(
+            label="📥 엑셀 표준 양식 다운로드 (.xlsx)",
+            data=tpl_buffer.getvalue(),
+            file_name="ERP_품목등록_표준양식.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        st.markdown("---")
+
+        uploaded_excel = st.file_uploader("📂 작성된 엑셀 파일 선택 (.xlsx)", type=["xlsx"])
         if uploaded_excel and st.button("🚀 DB 일괄 등록 실행"):
-            df_up = pd.read_excel(uploaded_excel)
-            for _, r in df_up.iterrows():
-                db.supabase.table("items").upsert({
-                    "item_code": safe_str(r.get("item_code")),
-                    "item_name": safe_str(r.get("item_name")),
-                    "unit_price": safe_float(r.get("unit_price"))
-                }).execute()
-            st.success("🎉 일괄 등록 완료!")
+            try:
+                df_up = pd.read_excel(uploaded_excel)
+                for _, r in df_up.iterrows():
+                    db.supabase.table("items").upsert({
+                        "item_code": safe_str(r.get("item_code")),
+                        "item_name": safe_str(r.get("item_name")),
+                        "item_detail_no": safe_str(r.get("item_detail_no")),
+                        "model_spec": safe_str(r.get("model_spec")),
+                        "category_type": safe_str(r.get("category_type")),
+                        "category_main": safe_str(r.get("category_main")),
+                        "category_sub": safe_str(r.get("category_sub")),
+                        "shelf_no": safe_str(r.get("shelf_no")),
+                        "zone": safe_str(r.get("zone")),
+                        "device_name": safe_str(r.get("device_name")),
+                        "maker": safe_str(r.get("maker")),
+                        "useful_life": safe_str(r.get("useful_life")),
+                        "in_date": safe_str(r.get("in_date")),
+                        "currency": safe_str(r.get("currency"), "KRW"),
+                        "unit_price": safe_float(r.get("unit_price")),
+                        "remark": safe_str(r.get("remark"))
+                    }).execute()
+                st.success("🎉 엑셀 일괄 등록 완료!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"엑셀 업로드 중 오류 발생: {e}")
 
 # ---------------------------------------------------------
 # 메뉴 4: 입출고 내역 조회
 # ---------------------------------------------------------
 elif menu == "🔍 입출고 내역 조회":
-    st.subheader("🔍 입출고 통합 이력 조회 ")
+    st.subheader("🔍 입출고 통합 이력 조회 (Supabase Transactions)")
     resp = db.supabase.table("stock_transactions").select("*").order("trans_date", desc=True).execute()
     df_trans = pd.DataFrame(resp.data or [])
     if not df_trans.empty:
@@ -437,44 +488,117 @@ elif menu == "🔍 입출고 내역 조회":
         st.info("등록된 입출고 이력이 없습니다.")
 
 # ---------------------------------------------------------
-# 메뉴 5: 환율 설정
+# 메뉴 5: 환율 설정 (통화별 색상 스타일링)
 # ---------------------------------------------------------
 elif menu == "⚙️ 환율 설정":
     st.subheader("⚙️ 연도별 기준 환율 관리")
-    resp = db.supabase.table("exchange_rates").select("*").execute()
-    st.dataframe(pd.DataFrame(resp.data or []), use_container_width=True)
+    st.caption("🎨 통화별 구분: USD (연한 연두색), EUR (연한 하늘색), JPY (연한 핑크색)")
+    
+    resp = db.supabase.table("exchange_rates").select("*").order("year", desc=True).execute()
+    df_rates = pd.DataFrame(resp.data or [])
+    
+    if not df_rates.empty:
+        # 통화별 색상 스타일 지정
+        def highlight_currency(row):
+            curr = str(row.get("currency", "")).upper()
+            if curr == "USD":
+                return ['background-color: #E8F5E9; color: #1B5E20; font-weight: bold;'] * len(row)
+            elif curr == "EUR":
+                return ['background-color: #E1F5FE; color: #01579B; font-weight: bold;'] * len(row)
+            elif curr == "JPY":
+                return ['background-color: #FCE4EC; color: #880E4F; font-weight: bold;'] * len(row)
+            return [''] * len(row)
+
+        styled_df = df_rates.style.apply(highlight_currency, axis=1)
+        st.dataframe(styled_df, use_container_width=True)
+    else:
+        st.info("등록된 환율 데이터가 없습니다.")
 
     with st.form("rate_form"):
         col1, col2, col3 = st.columns(3)
         r_year = col1.number_input("연도", value=datetime.date.today().year)
         r_curr = col2.selectbox("화폐", ["USD", "EUR", "JPY"])
-        r_rate = col3.number_input("환율 (KRW)", value=1350.0)
+        r_rate = col3.number_input("환율 (KRW)", value=1350.0, step=10.0)
         if st.form_submit_button("환율 저장"):
             db.supabase.table("exchange_rates").upsert({"year": r_year, "currency": r_curr, "rate": r_rate}).execute()
-            st.success("✅ 환율 설정 저장 완료!")
+            st.success(f"✅ {r_year}년 {r_curr} 환율 설정 저장 완료!")
             st.rerun()
 
 # ---------------------------------------------------------
-# 메뉴 6: 사용자 관리 (관리자 전용)
+# 메뉴 6: 사용자 관리 (관리자 전용 - 수정/삭제 기능 추가)
 # ---------------------------------------------------------
 elif menu == "👥 사용자 관리 (관리자)":
     st.subheader("👥 시스템 사용자 계정 관리")
+    
     resp = db.supabase.table("users").select("emp_no, name, position, is_admin, created_at").execute()
-    st.dataframe(pd.DataFrame(resp.data or []), use_container_width=True)
+    users_data = resp.data or []
+    df_users = pd.DataFrame(users_data)
+    
+    if not df_users.empty:
+        st.dataframe(df_users, use_container_width=True)
+    
+    tab_user1, tab_user2, tab_user3 = st.tabs(["➕ 신규 사용자 추가", "✏️ 계정 정보 수정", "🗑️ 계정 삭제"])
 
-    with st.form("add_user_form"):
-        col1, col2, col3 = st.columns(3)
-        u_emp = col1.text_input("사번 (ID) (*필수)")
-        u_pw = col2.text_input("비밀번호 (*필수)", type="password")
-        u_name = col3.text_input("이름 (*필수)")
-        u_pos = st.selectbox("직급", POSITIONS)
-        u_admin = st.checkbox("관리자 권한 부여")
+    with tab_user1:
+        with st.form("add_user_form", clear_on_submit=True):
+            col1, col2, col3 = st.columns(3)
+            u_emp = col1.text_input("사번 (ID) (*필수)")
+            u_pw = col2.text_input("비밀번호 (*필수)", type="password")
+            u_name = col3.text_input("이름 (*필수)")
+            u_pos = st.selectbox("직급", POSITIONS)
+            u_admin = st.checkbox("관리자 권한 부여")
 
-        if st.form_submit_button("사용자 계정 생성"):
-            if u_emp and u_pw and u_name:
-                db.supabase.table("users").insert({
-                    "emp_no": u_emp.strip(), "password": u_pw.strip(),
-                    "name": u_name.strip(), "position": u_pos, "is_admin": 1 if u_admin else 0
-                }).execute()
-                st.success(f"✅ 계정 [{u_name}] 생성 완료!")
-                st.rerun()
+            if st.form_submit_button("사용자 계정 생성"):
+                if u_emp and u_pw and u_name:
+                    db.supabase.table("users").insert({
+                        "emp_no": u_emp.strip(), "password": u_pw.strip(),
+                        "name": u_name.strip(), "position": u_pos, "is_admin": 1 if u_admin else 0
+                    }).execute()
+                    st.success(f"✅ 사용자 [{u_name}] 계정 생성 완료!")
+                    st.rerun()
+                else:
+                    st.error("필수 정보를 모두 입력하세요.")
+
+    with tab_user2:
+        if users_data:
+            user_opts = {f"[{u['emp_no']}] {u['name']} ({u['position']})": u for u in users_data}
+            sel_u_label = st.selectbox("수정할 사용자 선택:", list(user_opts.keys()))
+            target_u = user_opts[sel_u_label]
+
+            with st.form("edit_user_form"):
+                st.markdown(f"#### 📌 [{target_u['emp_no']}] 계정 수정")
+                col1, col2 = st.columns(2)
+                edit_pw = col1.text_input("새 비밀번호 (변경 시만 입력)")
+                edit_name = col2.text_input("이름", value=target_u["name"])
+                
+                col3, col4 = st.columns(2)
+                edit_pos = col3.selectbox("직급", POSITIONS, index=POSITIONS.index(target_u["position"]) if target_u["position"] in POSITIONS else 0)
+                edit_admin = col4.checkbox("관리자 권한", value=bool(target_u.get("is_admin")))
+
+                if st.form_submit_button("사용자 정보 수정 저장"):
+                    update_payload = {
+                        "name": edit_name.strip(),
+                        "position": edit_pos,
+                        "is_admin": 1 if edit_admin else 0
+                    }
+                    if edit_pw.strip():
+                        update_payload["password"] = edit_pw.strip()
+
+                    db.supabase.table("users").update(update_payload).eq("emp_no", target_u["emp_no"]).execute()
+                    st.success(f"✅ [{target_u['emp_no']}] 사용자 정보가 성공적으로 수정되었습니다.")
+                    st.rerun()
+
+    with tab_user3:
+        if users_data:
+            del_opts = {f"[{u['emp_no']}] {u['name']} ({u['position']})": u['emp_no'] for u in users_data}
+            sel_del_label = st.selectbox("삭제할 사용자 계정 선택:", list(del_opts.keys()))
+            target_del_emp = del_opts[sel_del_label]
+
+            st.warning(f"⚠️ 선택한 계정 (`{target_del_emp}`)을 삭제하시겠습니까? 삭제된 계정은 복구할 수 없습니다.")
+            if st.button("❌ 선택 계정 즉시 삭제"):
+                if target_del_emp == user["emp_no"]:
+                    st.error("현재 로그인되어 있는 본인 계정은 삭제할 수 없습니다.")
+                else:
+                    db.supabase.table("users").delete().eq("emp_no", target_del_emp).execute()
+                    st.success(f"✅ 사용자 계정 (`{target_del_emp}`)이 성공적으로 삭제되었습니다.")
+                    st.rerun()
