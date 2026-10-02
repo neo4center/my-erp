@@ -87,17 +87,21 @@ def register_inbound_lot(item_code, item_name, category, inbound_date, unit_pric
     
     return new_lot_id
 
-# 4. 재고 현황 조회 (app.py에서 호출하는 필수 함수)
+# 4. 재고 현황 조회 (stock_lots와 items 조인)
 def get_stock_by_lots():
     """
-    stock_lots와 items를 조인하여 단가별/입고일별 잔여 재고 및 사진 URL을 조회합니다.
+    stock_lots와 items를 조인하여 Lot별 재고 및 상세 품목 정보, 사진 URL을 조회합니다.
     """
-    response = supabase.table("stock_lots") \
-        .select("lot_id, item_code, inbound_date, unit_price, current_qty, items(item_name, category, photo_url)") \
-        .gt("current_qty", 0) \
-        .order("inbound_date", desc=False) \
-        .execute()
-    return response.data
+    try:
+        response = supabase.table("stock_lots") \
+            .select("lot_id, item_code, inbound_date, unit_price, current_qty, items(item_name, item_detail_no, model_spec, category_type, category_main, category_sub, shelf_no, zone, device_name, maker, photo_url)") \
+            .gt("current_qty", 0) \
+            .order("inbound_date", desc=False) \
+            .execute()
+        return response.data or []
+    except Exception as e:
+        st.error(f"재고 데이터 조회 중 오류 발생: {e}")
+        return []
 
 # 5. FIFO(선입선출) 출고 처리 함수
 def process_fifo_outbound(item_code: str, outbound_qty: int, trans_date: str):
