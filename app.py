@@ -61,7 +61,6 @@ def generate_next_item_code():
         max_num = 0
         for i in items:
             code = i.get("item_code", "")
-            # 숫자가 포함되어 있다면 최대값 탐색
             nums = re.findall(r'\d+', code)
             if nums:
                 max_num = max(max_num, int(nums[-1]))
@@ -359,9 +358,9 @@ elif menu == "📝 입출고 등록":
         render_a4_spec_card(item_code)
 
 # ---------------------------------------------------------
-# 메뉴 3: 품목 관리 (품목코드 공란 시 자동 채번 로직 추가)
+# 메뉴 3: 품목 관리 (0개 초기수량 허용 및 반복 일괄 등록 지원)
 # ---------------------------------------------------------
-elif menu == "🏷️ 품목 관리":
+elif menu == "🏷️️ 품목 관리":
     st.subheader("🏷️ 품목 등록 및 수정 관리")
     tab1, tab2, tab3 = st.tabs(["✍️ 개별 직접 등록", "✏️ 기존 품목 수정", "📂 엑셀 일괄 등록"])
 
@@ -460,10 +459,10 @@ elif menu == "🏷️ 품목 관리":
 
     with tab3:
         st.markdown("#### 📂 엑셀 대량 등록 및 양식 다운로드")
-        st.caption("아래 표준 양식을 다운로드하여 작성한 후 업로드해 주세요. (품목코드가 공란이면 자동으로 신규 코드가 채번됩니다)")
+        st.caption("아래 표준 양식을 다운로드하여 작성한 후 업로드해 주세요. (초기수량이 0개이거나 공란이어도 품목 마스터에 정상 등록되며, 동일 파일 재업로드 시 추가 누적 입고됩니다)")
 
         template_df = pd.DataFrame([{
-            "item_code": "",  # 공란 허용 (자동 채번)
+            "item_code": "",
             "item_name": "예시 자재명 (특수문자: Ø, ½, ±)",
             "item_detail_no": "ABC-123",
             "model_spec": "SPEC-01",
@@ -478,7 +477,7 @@ elif menu == "🏷️ 품목 관리":
             "in_date": str(datetime.date.today()),
             "currency": "KRW",
             "unit_price": 50000,
-            "initial_quantity": 10,
+            "initial_quantity": 0,  # 0개 또는 수량 입력 가능
             "remark": "비고 내용 예시"
         }])
         
@@ -509,9 +508,17 @@ elif menu == "🏷️ 품목 관리":
                         if not i_name:
                             continue
 
-                        # 품목코드 공란 시 자동 채번
+                        # 1) 품목코드 처리 (기존에 코드가 적혀있으면 해당 코드 사용, 없으면 자동 채번)
                         raw_code = safe_str_clean(r.get("item_code"))
-                        i_code = raw_code if raw_code else generate_next_item_code()
+                        if raw_code:
+                            i_code = raw_code
+                        else:
+                            # 엑셀 내에 동일한 품명이 이미 등록되어 있는지 확인하여 중복 채번 방지
+                            check_resp = db.supabase.table("items").select("item_code").eq("item_name", i_name).execute()
+                            if check_resp.data:
+                                i_code = check_resp.data[0]["item_code"]
+                            else:
+                                i_code = generate_next_item_code()
 
                         u_price = safe_float(r.get("unit_price"), 0.0)
                         init_qty = safe_int_clean(r.get("initial_quantity"), 0)
@@ -541,9 +548,11 @@ elif menu == "🏷️ 품목 관리":
                         if existing_photo:
                             item_payload["photo_url"] = existing_photo
 
+                        # 품목 마스터 등록 (0개여도 정상 등록)
                         db.supabase.table("items").upsert(item_payload).execute()
                         success_count += 1
 
+                        # 수량이 1개 이상인 경우에만 새로운 Lot 및 입고 이력 생성 (동일 파일 재등록 시 추가 입고 누적)
                         if init_qty > 0:
                             db.register_inbound_lot(
                                 item_code=i_code,
@@ -556,7 +565,7 @@ elif menu == "🏷️ 품목 관리":
                             stock_count += 1
 
                     if success_count > 0:
-                        st.success(f"🎉 총 {success_count}개 품목 등록 완료! (재고 Lot 생성: {stock_count}건)")
+                        st.success(f"🎉 총 {success_count}개 품목 등록/갱신 완료! (신규 입고 Lot 생성: {stock_count}건)")
                         st.rerun()
                     else:
                         st.warning("⚠️ 엑셀 내 유효한 품명 데이터가 없어 등록되지 않았습니다. 양식을 확인해주세요.")
@@ -696,7 +705,7 @@ elif menu == "👥 사용자 관리 (관리자)":
             sel_del_label = st.selectbox("삭제할 사용자 계정 선택:", list(del_opts.keys()))
             target_del_emp = del_opts[sel_del_label]
 
-            st.warning(f"⚠️ 선택한 계정 (`{target_del_emp}`)을 삭제하시겠습니까? 삭제된 계정은 복구할 수 없습니다.")
+            st.warning(f"⚠️️ 선택한 계정 (`{target_del_emp}`)을 삭제하시겠습니까? 삭제된 계정은 복구할 수 없습니다.")
             if st.button("❌ 선택 계정 즉시 삭제"):
                 if target_del_emp == user["emp_no"]:
                     st.error("현재 로그인되어 있는 본인 계정은 삭제할 수 없습니다.")
