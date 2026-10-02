@@ -5,8 +5,12 @@ import pandas as pd
 import streamlit as st
 import db_helper as db
 
+# Streamlit 기본 설정
 st.set_page_config(page_title="광주오포센터 자동화 ERP", layout="wide")
 
+# ---------------------------------------------------------
+# 1. 헬퍼 함수
+# ---------------------------------------------------------
 POSITIONS = ["팀장", "부팀장", "마스터", "과장", "대리", "주임", "사원"]
 
 def safe_float(val, default=0.0):
@@ -133,6 +137,9 @@ def render_a4_spec_card(item_code):
 
         st.markdown("</div>", unsafe_allow_html=True)
 
+# ---------------------------------------------------------
+# 2. 로그인 세션 관리
+# ---------------------------------------------------------
 if "logged_in_user" not in st.session_state:
     st.session_state.logged_in_user = None
 
@@ -166,6 +173,9 @@ if st.session_state.logged_in_user is None:
                     st.error("사번과 비밀번호를 입력하세요.")
     st.stop()
 
+# ---------------------------------------------------------
+# 3. 메인 ERP 사이드바
+# ---------------------------------------------------------
 user = st.session_state.logged_in_user
 st.title("🏭 광주오포센터 자동화 ERP")
 
@@ -175,12 +185,16 @@ if st.sidebar.button("로그아웃"):
     st.rerun()
 
 st.sidebar.markdown("---")
-menu_list = ["📊 재고 현황판", "📝 입출고 등록", "🏷️ 품목 관리", "🔍 입출고 내역 조회", "⚙️ 환율 설정"]
+MENU_RATES = "⚙️ 환율 설정"
+menu_list = ["📊 재고 현황판", "📝 입출고 등록", "🏷️ 품목 관리", "🔍 입출고 내역 조회", MENU_RATES]
 if user.get("is_admin") == 1:
     menu_list.append("👥 사용자 관리 (관리자)")
 
 menu = st.sidebar.radio("메뉴 이동:", menu_list)
 
+# ---------------------------------------------------------
+# 메뉴 조건 분기
+# ---------------------------------------------------------
 if menu == "📊 재고 현황판":
     st.subheader("📊 현재 품목별/Lot별 재고 현황판")
     search_kw = st.text_input("🔍 통합 검색 (품명, 코드, 상세번호, 규격, 구분, 구역, Maker 등)", "")
@@ -504,8 +518,8 @@ elif menu == "🔍 입출고 내역 조회":
     else:
         st.info("등록된 입출고 이력이 없습니다.")
 
-elif menu == "⚙️️ 환율 설정":
-    st.subheader("⚙️ 연도별 기준 환율 관리")
+elif menu == MENU_RATES:
+    st.subheader("⚙️️ 연도별 기준 환율 관리")
     st.caption("🎨 통화별 구분: USD (연한 연두색), EUR (연한 하늘색), JPY (연한 핑크색)")
     
     resp = db.supabase.table("exchange_rates").select("year, currency, rate").order("year", desc=True).execute()
