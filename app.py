@@ -304,10 +304,12 @@ if menu == MENU_STOCK:
         items_query = db.supabase.table("items").select("*")
         if search_kw:
             items_query = items_query.or_(f"item_name.ilike.%{search_kw}%,item_code.ilike.%{search_kw}%,model_spec.ilike.%{search_kw}%,maker.ilike.%{search_kw}%,zone.ilike.%{search_kw}%")
-        items_resp = items_query.limit(200).execute()
+        
+        # 전체 1,100여 개 품목이 모두 조회되도록 limit 해제 (최대 2000개까지 넉넉하게 허용)
+        items_resp = items_query.limit(2000).execute()
         all_items = items_resp.data or []
     except Exception:
-        all_items = db.supabase.table("items").select("*").limit(200).execute().data or []
+        all_items = db.supabase.table("items").select("*").limit(2000).execute().data or []
 
     lots_data = db.get_stock_by_lots() or []
     
@@ -444,9 +446,9 @@ elif menu == MENU_TRANS:
         t_query = db.supabase.table("items").select("item_code, item_name, item_detail_no, maker, unit_price, currency")
         if search_kw_trans:
             t_query = t_query.or_(f"item_name.ilike.%{search_kw_trans}%,item_code.ilike.%{search_kw_trans}%")
-        items_list = t_query.limit(50).execute().data or []
+        items_list = t_query.limit(2000).execute().data or []
     except Exception:
-        items_list = db.supabase.table("items").select("item_code, item_name, item_detail_no, maker, unit_price, currency").limit(50).execute().data or []
+        items_list = db.supabase.table("items").select("item_code, item_name, item_detail_no, maker, unit_price, currency").limit(2000).execute().data or []
 
     if not items_list:
         st.warning("조건에 일치하는 품목이 없습니다. '품목 관리'에서 품목을 먼저 등록하세요.")
@@ -576,9 +578,9 @@ elif menu == MENU_ITEMS:
             e_query = db.supabase.table("items").select("*")
             if edit_search:
                 e_query = e_query.or_(f"item_name.ilike.%{edit_search}%,item_code.ilike.%{edit_search}%,model_spec.ilike.%{edit_search}%")
-            filtered_edit_items = e_query.limit(100).execute().data or []
+            filtered_edit_items = e_query.limit(2000).execute().data or []
         except Exception:
-            filtered_edit_items = db.supabase.table("items").select("*").limit(100).execute().data or []
+            filtered_edit_items = db.supabase.table("items").select("*").limit(2000).execute().data or []
 
         if filtered_edit_items:
             edit_opts = {f"[{i['item_code']}] {i['item_name']} (규격: {i.get('model_spec','-')})": i for i in filtered_edit_items}
@@ -677,7 +679,6 @@ elif menu == MENU_ITEMS:
 
                         codes_to_reset.append(i_code)
 
-                        # 품목 마스터 패킷
                         item_payload = {
                             "item_code": i_code,
                             "item_name": i_name,
@@ -698,7 +699,6 @@ elif menu == MENU_ITEMS:
                         }
                         items_payloads.append(item_payload)
 
-                        # 기초 수량이 있을 경우 단 하나의 기초 Lot 및 거래 패킷 생성
                         if init_qty > 0:
                             lots_payloads.append({
                                 "item_code": i_code,
@@ -718,19 +718,15 @@ elif menu == MENU_ITEMS:
                             })
 
                     if items_payloads:
-                        # 기존 재고 Lot 및 거래내역을 품목코드별로 일괄 삭제 (초기화)
                         for ic in codes_to_reset:
                             db.supabase.table("stock_lots").delete().eq("item_code", ic).execute()
                             db.supabase.table("stock_transactions").delete().eq("item_code", ic).execute()
 
-                        # 1. 품목 마스터 묶음(Bulk) 업로드
                         db.supabase.table("items").upsert(items_payloads).execute()
 
-                        # 2. 기초 재고 Lot 묶음(Bulk) 업로드
                         if lots_payloads:
                             db.supabase.table("stock_lots").insert(lots_payloads).execute()
 
-                        # 3. 입고 거래 이력 묶음(Bulk) 업로드
                         if trans_payloads:
                             db.supabase.table("stock_transactions").insert(trans_payloads).execute()
 
@@ -755,9 +751,9 @@ elif menu == MENU_HISTORY:
         h_query = db.supabase.table("stock_transactions").select("*").order("trans_date", desc=True)
         if hist_search:
             h_query = h_query.or_(f"item_code.ilike.%{hist_search}%,requester.ilike.%{hist_search}%,manager.ilike.%{hist_search}%")
-        trans_data = h_query.limit(200).execute().data or []
+        trans_data = h_query.limit(2000).execute().data or []
     except Exception:
-        trans_data = db.supabase.table("stock_transactions").select("*").order("trans_date", desc=True).limit(200).execute().data or []
+        trans_data = db.supabase.table("stock_transactions").select("*").order("trans_date", desc=True).limit(2000).execute().data or []
 
     if trans_data:
         items_resp = db.supabase.table("items").select("item_code, item_name, currency").execute()
@@ -987,7 +983,7 @@ elif menu == "👥 사용자 관리 (관리자)":
             sel_del_label = st.selectbox("삭제할 사용자 계정 선택:", list(del_opts.keys()))
             target_del_emp = del_opts[sel_del_label]
 
-            st.warning(f"⚠️ 선택한 계정 (`{target_del_emp}`)을 삭제하시겠습니까? 삭제된 계정은 복구할 수 없습니다.")
+            st.warning(f"⚠️️ 선택한 계정 (`{target_del_emp}`)을 삭제하시겠습니까? 삭제된 계정은 복구할 수 없습니다.")
             if st.button("❌ 선택 계정 즉시 삭제"):
                 if target_del_emp == user["emp_no"]:
                     st.error("현재 로그인되어 있는 본인 계정은 삭제할 수 없습니다.")
