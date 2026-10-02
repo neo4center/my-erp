@@ -5,12 +5,8 @@ import pandas as pd
 import streamlit as st
 import db_helper as db
 
-# Streamlit 기본 설정
 st.set_page_config(page_title="광주오포센터 자동화 ERP", layout="wide")
 
-# ---------------------------------------------------------
-# 1. 헬퍼 함수
-# ---------------------------------------------------------
 POSITIONS = ["팀장", "부팀장", "마스터", "과장", "대리", "주임", "사원"]
 
 def safe_float(val, default=0.0):
@@ -64,7 +60,6 @@ def get_exchange_rate(currency, year=None):
     return 1.0
 
 def render_a4_spec_card(item_code):
-    """Supabase 데이터를 활용해 A4 스타일 상세 명세서 카드 출력"""
     item_resp = db.supabase.table("items").select("*").eq("item_code", item_code).execute()
     if not item_resp.data:
         return
@@ -138,9 +133,6 @@ def render_a4_spec_card(item_code):
 
         st.markdown("</div>", unsafe_allow_html=True)
 
-# ---------------------------------------------------------
-# 2. 로그인 세션 관리
-# ---------------------------------------------------------
 if "logged_in_user" not in st.session_state:
     st.session_state.logged_in_user = None
 
@@ -174,9 +166,6 @@ if st.session_state.logged_in_user is None:
                     st.error("사번과 비밀번호를 입력하세요.")
     st.stop()
 
-# ---------------------------------------------------------
-# 3. 메인 ERP 사이드바
-# ---------------------------------------------------------
 user = st.session_state.logged_in_user
 st.title("🏭 광주오포센터 자동화 ERP")
 
@@ -192,13 +181,8 @@ if user.get("is_admin") == 1:
 
 menu = st.sidebar.radio("메뉴 이동:", menu_list)
 
-# ---------------------------------------------------------
-# 메뉴 1: 재고 현황판
-# ---------------------------------------------------------
 if menu == "📊 재고 현황판":
     st.subheader("📊 현재 품목별/Lot별 재고 현황판")
-    st.caption("💡 아래 표에서 행을 선택하면 하단에 A4 자재 품목 명세서가 자동으로 생성됩니다.")
-
     search_kw = st.text_input("🔍 통합 검색 (품명, 코드, 상세번호, 규격, 구분, 구역, Maker 등)", "")
 
     lots_data = db.get_stock_by_lots()
@@ -273,9 +257,6 @@ if menu == "📊 재고 현황판":
     else:
         st.info("등록된 재고 데이터가 없습니다.")
 
-# ---------------------------------------------------------
-# 메뉴 2: 입출고 등록
-# ---------------------------------------------------------
 elif menu == "📝 입출고 등록":
     st.subheader("📝 자재 입출고 등록 (Lot 단가 분리 & FIFO 선입선출)")
 
@@ -326,7 +307,7 @@ elif menu == "📝 입출고 등록":
                             )
                             st.success(f"✅ [{item_code}] {quantity}개 입고 등록이 완료되었습니다.")
                         else:
-                            success = db.process_fifo_outbound(
+                            db.process_fifo_outbound(
                                 item_code=item_code,
                                 outbound_qty=quantity,
                                 trans_date=str(trans_date)
@@ -337,9 +318,6 @@ elif menu == "📝 입출고 등록":
         st.subheader(f"📄 선택 품목 [{item_code}] 실시간 상세 명세서")
         render_a4_spec_card(item_code)
 
-# ---------------------------------------------------------
-# 메뉴 3: 품목 관리 (로딩 스피너 및 안전한 엑셀 일괄 등록)
-# ---------------------------------------------------------
 elif menu == "🏷️ 품목 관리":
     st.subheader("🏷️ 품목 등록 및 수정 관리")
     tab1, tab2, tab3 = st.tabs(["✍️ 개별 직접 등록", "✏️ 기존 품목 수정", "📂 엑셀 일괄 등록"])
@@ -422,7 +400,7 @@ elif menu == "🏷️ 품목 관리":
 
     with tab3:
         st.markdown("#### 📂 엑셀 대량 등록 및 양식 다운로드")
-        st.caption("아래 표준 양식을 다운로드하여 작성한 후 업로드해 주세요. (초기 수량이 작성되면 자동으로 재고 Lot이 생성됩니다)")
+        st.caption("아래 표준 양식을 다운로드하여 작성한 후 업로드해 주세요.")
 
         template_df = pd.DataFrame([{
             "item_code": "N4_0001",
@@ -458,7 +436,7 @@ elif menu == "🏷️ 품목 관리":
 
         uploaded_excel = st.file_uploader("📂 작성된 엑셀 파일 선택 (.xlsx)", type=["xlsx"])
         if uploaded_excel and st.button("🚀 DB 일괄 등록 및 재고 생성 실행"):
-            with st.spinner("⏳ 엑셀 파일 읽기 및 Supabase DB 등록 중입니다... 잠시만 기다려 주세요."):
+            with st.spinner("⏳ 엑셀 데이터 분석 및 Supabase DB 등록 중입니다..."):
                 try:
                     df_up = pd.read_excel(uploaded_excel)
                     success_count = 0
@@ -474,7 +452,6 @@ elif menu == "🏷️ 품목 관리":
                         init_qty = safe_int(r.get("initial_quantity"), 0)
                         in_d = clean_date(r.get("in_date"))
 
-                        # 기존 이미지 URL 보존을 위해 기존 정보 확인
                         existing = db.supabase.table("items").select("photo_url").eq("item_code", i_code).execute()
                         existing_photo = existing.data[0]["photo_url"] if existing.data and existing.data[0].get("photo_url") else None
 
@@ -499,11 +476,9 @@ elif menu == "🏷️ 품목 관리":
                         if existing_photo:
                             item_payload["photo_url"] = existing_photo
 
-                        # 1) items 마스터 등록 (안전한 Upsert)
                         db.supabase.table("items").upsert(item_payload).execute()
                         success_count += 1
 
-                        # 2) 초기 수량이 1개 이상인 경우 stock_lots 및 stock_transactions 생성
                         if init_qty > 0:
                             db.register_inbound_lot(
                                 item_code=i_code,
@@ -520,9 +495,6 @@ elif menu == "🏷️ 품목 관리":
                 except Exception as e:
                     st.error(f"엑셀 업로드 중 오류 발생: {e}")
 
-# ---------------------------------------------------------
-# 메뉴 4: 입출고 내역 조회
-# ---------------------------------------------------------
 elif menu == "🔍 입출고 내역 조회":
     st.subheader("🔍 입출고 통합 이력 조회 (Supabase Transactions)")
     resp = db.supabase.table("stock_transactions").select("*").order("trans_date", desc=True).execute()
@@ -532,10 +504,7 @@ elif menu == "🔍 입출고 내역 조회":
     else:
         st.info("등록된 입출고 이력이 없습니다.")
 
-# ---------------------------------------------------------
-# 메뉴 5: 환율 설정
-# ---------------------------------------------------------
-elif menu == "⚙️ 환율 설정":
+elif menu == "⚙️️ 환율 설정":
     st.subheader("⚙️ 연도별 기준 환율 관리")
     st.caption("🎨 통화별 구분: USD (연한 연두색), EUR (연한 하늘색), JPY (연한 핑크색)")
     
@@ -580,9 +549,6 @@ elif menu == "⚙️ 환율 설정":
                 st.success(f"✅ {r_year}년 {r_curr} 환율 설정 저장 완료!")
                 st.rerun()
 
-# ---------------------------------------------------------
-# 메뉴 6: 사용자 관리 (관리자 전용)
-# ---------------------------------------------------------
 elif menu == "👥 사용자 관리 (관리자)":
     st.subheader("👥 시스템 사용자 계정 관리")
     
