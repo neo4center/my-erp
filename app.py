@@ -331,7 +331,7 @@ elif menu == "📝 입출고 등록":
         render_a4_spec_card(item_code)
 
 # ---------------------------------------------------------
-# 메뉴 3: 품목 관리 (개별 등록, 수정, 엑셀 일괄 등록 및 표준양식 제공)
+# 메뉴 3: 품목 관리
 # ---------------------------------------------------------
 elif menu == "🏷️ 품목 관리":
     st.subheader("🏷️ 품목 등록 및 수정 관리")
@@ -415,7 +415,6 @@ elif menu == "🏷️ 품목 관리":
         st.markdown("#### 📂 엑셀 대량 등록 및 양식 다운로드")
         st.caption("아래 표준 양식을 다운로드하여 작성한 후 업로드해 주세요.")
 
-        # 엑셀 표준 양식 생성
         template_df = pd.DataFrame([{
             "item_code": "N4_0001",
             "item_name": "예시 자재명",
@@ -488,19 +487,21 @@ elif menu == "🔍 입출고 내역 조회":
         st.info("등록된 입출고 이력이 없습니다.")
 
 # ---------------------------------------------------------
-# 메뉴 5: 환율 설정 (통화별 색상 스타일링)
+# 메뉴 5: 환율 설정 (소수점 2자리 및 가운데 정렬)
 # ---------------------------------------------------------
 elif menu == "⚙️ 환율 설정":
     st.subheader("⚙️ 연도별 기준 환율 관리")
     st.caption("🎨 통화별 구분: USD (연한 연두색), EUR (연한 하늘색), JPY (연한 핑크색)")
     
-    resp = db.supabase.table("exchange_rates").select("*").order("year", desc=True).execute()
+    resp = db.supabase.table("exchange_rates").select("year, currency, rate").order("year", desc=True).execute()
     df_rates = pd.DataFrame(resp.data or [])
     
     if not df_rates.empty:
-        # 통화별 색상 스타일 지정
+        df_rates.rename(columns={"year": "연도", "currency": "화폐단위", "rate": "환율"}, inplace=True)
+        
+        # 통화별 행 배경색 스타일링
         def highlight_currency(row):
-            curr = str(row.get("currency", "")).upper()
+            curr = str(row.get("화폐단위", "")).upper()
             if curr == "USD":
                 return ['background-color: #E8F5E9; color: #1B5E20; font-weight: bold;'] * len(row)
             elif curr == "EUR":
@@ -510,7 +511,17 @@ elif menu == "⚙️ 환율 설정":
             return [''] * len(row)
 
         styled_df = df_rates.style.apply(highlight_currency, axis=1)
-        st.dataframe(styled_df, use_container_width=True)
+        
+        # 가운데 정렬 및 환율 소수점 2자리 포맷 설정
+        st.dataframe(
+            styled_df,
+            column_config={
+                "연도": st.column_config.NumberColumn("연도", format="%d", alignment="center"),
+                "화폐단위": st.column_config.TextColumn("화폐단위", alignment="center"),
+                "환율": st.column_config.NumberColumn("환율 (KRW)", format="%.2f 원", alignment="center")
+            },
+            use_container_width=True
+        )
     else:
         st.info("등록된 환율 데이터가 없습니다.")
 
@@ -518,14 +529,14 @@ elif menu == "⚙️ 환율 설정":
         col1, col2, col3 = st.columns(3)
         r_year = col1.number_input("연도", value=datetime.date.today().year)
         r_curr = col2.selectbox("화폐", ["USD", "EUR", "JPY"])
-        r_rate = col3.number_input("환율 (KRW)", value=1350.0, step=10.0)
+        r_rate = col3.number_input("환율 (KRW)", value=1350.00, step=10.0, format="%.2f")
         if st.form_submit_button("환율 저장"):
             db.supabase.table("exchange_rates").upsert({"year": r_year, "currency": r_curr, "rate": r_rate}).execute()
             st.success(f"✅ {r_year}년 {r_curr} 환율 설정 저장 완료!")
             st.rerun()
 
 # ---------------------------------------------------------
-# 메뉴 6: 사용자 관리 (관리자 전용 - 수정/삭제 기능 추가)
+# 메뉴 6: 사용자 관리 (관리자 전용)
 # ---------------------------------------------------------
 elif menu == "👥 사용자 관리 (관리자)":
     st.subheader("👥 시스템 사용자 계정 관리")
