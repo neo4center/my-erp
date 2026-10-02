@@ -67,7 +67,6 @@ def generate_next_item_code():
         return f"ITEM_{int(datetime.datetime.now().timestamp())}"
 
 def get_year_from_date(date_str):
-    """입고일 문자열에서 4자리 연도를 안전하게 추출 (예: '2023-05-10' -> 2023, '23.05.10' -> 2023)"""
     if not date_str:
         return datetime.date.today().year
     s = str(date_str).strip()
@@ -83,23 +82,28 @@ def get_year_from_date(date_str):
         return 2000 + yy if yy < 50 else 1900 + yy
     return datetime.date.today().year
 
+@st.cache_data(ttl=600)
+def get_cached_exchange_rates():
+    try:
+        resp = db.supabase.table("exchange_rates").select("year, currency, rate").execute()
+        rates_map = {}
+        for r in (resp.data or []):
+            rates_map[(r["year"], r["currency"].upper())] = safe_float(r["rate"], 1.0)
+        return rates_map
+    except Exception:
+        return {}
+
 def get_exchange_rate_by_year(currency, year):
-    """지정한 연도와 화폐단위에 해당하는 환율 조회 (없을 경우 가장 최근 연도 환율 반환)"""
     curr = str(currency).upper().strip()
     if curr == "KRW" or not curr:
         return 1.0
-    try:
-        # 1차: 해당 연도 환율 조회
-        resp = db.supabase.table("exchange_rates").select("rate").eq("currency", curr).eq("year", year).execute()
-        if resp.data:
-            return safe_float(resp.data[0]["rate"], 1.0)
-        
-        # 2차: 없으면 가장 근접한 연도 환율 조회
-        resp_fallback = db.supabase.table("exchange_rates").select("rate").eq("currency", curr).order("year", desc=True).limit(1).execute()
-        if resp_fallback.data:
-            return safe_float(resp_fallback.data[0]["rate"], 1.0)
-    except Exception:
-        pass
+    rates_map = get_cached_exchange_rates()
+    if (year, curr) in rates_map:
+        return rates_map[(year, curr)]
+    
+    currency_rates = [v for k, v in rates_map.items() if k[1] == curr]
+    if currency_rates:
+        return currency_rates[0]
     return 1.0
 
 def render_a4_spec_card(item_code):
@@ -108,21 +112,44 @@ def render_a4_spec_card(item_code):
         return
     item = item_resp.data[0]
 
+    # 해당 품목의 모든 유효한 Lot 가져오기
     lots_resp = db.supabase.table("stock_lots").select("current_qty, unit_price, inbound_date").eq("item_code", item_code).gt("current_qty", 0).execute()
     lots = lots_resp.data or []
-    current_stock = sum(l["current_qty"] for l in lots)
     
-    latest_price = lots[0]["unit_price"] if lots else safe_float(item.get("unit_price"))
-    inbound_d = lots[0]["inbound_date"] if lots and lots[0].get("inbound_date") else item.get("in_date", str(datetime.date.today()))
+    current_stock = sum(safe_int_clean(l.get("current_qty"), 0) for l in lots)
+    
     curr = safe_str_clean(item.get("currency"), "KRW")
-    
-    target_year = get_year_from_date(inbound_d)
-    rate = get_exchange_rate_by_year(curr, target_year)
-    
-    unit_krw = int(round(latest_price * rate))
-    val_krw = int(round(unit_krw * current_stock))
+    base_price = safe_float(item.get("unit_price"), 0.0)
+    base_in_date = item.get("in_date", str(datetime.date.today()))
 
-    trans_resp = db.supabase.table("stock_transactions").select("*").eq("item_code", item_code).order("trans_date", desc=True).execute()
+    # Lot별 정밀 집계 계산 (총 재고금액 = 각 Lot별 수량 × 단가 × 해당연도 환율의 합계)
+    total_val_krw = 0
+    representative_price = base_price
+    representative_rate = 1.0
+    representative_year = get_year_from_date(base_in_date)
+
+    if lots:
+        representative_price = safe_float(lots[0].get("unit_price"), base_price)
+        rep_date = lots[0].get("inbound_date", base_in_date)
+        representative_year = get_year_from_date(rep_date)
+        representative_rate = get_exchange_rate_by_year(curr, representative_year)
+
+        for l in lots:
+            l_qty = safe_int_clean(l.get("current_qty"), 0)
+            l_price = safe_float(l.get("unit_price"), base_price)
+            l_date = l.get("inbound_date", base_in_date)
+            l_year = get_year_from_date(l_date)
+            l_rate = get_exchange_rate_by_year(curr, l_year)
+            
+            l_unit_krw = l_price * l_rate
+            total_val_krw += round(l_unit_krw * l_qty)
+    else:
+        representative_rate = get_exchange_rate_by_year(curr, representative_year)
+        total_val_krw = 0
+
+    unit_krw_display = int(round(representative_price * representative_rate))
+
+    trans_resp = db.supabase.table("stock_transactions").select("*").eq("item_code", item_code).order("trans_date", desc=True).limit(50).execute()
     trans_data = trans_resp.data or []
     
     in_rows, out_rows = [], []
@@ -184,8 +211,8 @@ def render_a4_spec_card(item_code):
                 <tr><th>상세번호</th><td>{clean_val(item.get('item_detail_no'))}</td><th>규격/모델</th><td>{clean_val(item.get('model_spec'))}</td></tr>
                 <tr><th>구분</th><td>{clean_val(item.get('category_type'))}</td><th>분류체계</th><td>{category_full}</td></tr>
                 <tr><th>설치구역/기기</th><td>{clean_val(item.get('zone'))} / {clean_val(item.get('device_name'))}</td><th>Maker</th><td>{clean_val(item.get('maker'))}</td></tr>
-                <tr><th>화폐단위/단가</th><td>{curr} / {latest_price:,.2f}</td><th>적용 환율({target_year}년)</th><td>{rate:,.2f} 원</td></tr>
-                <tr><th>원화환산액</th><td>{unit_krw:,} 원</td><th>현재재고 / 재고금액</th><td><b>{current_stock:,} 개 / {val_krw:,} 원</b></td></tr>
+                <tr><th>화폐단위/단가</th><td>{curr} / {representative_price:,.2f}</td><th>적용 환율({representative_year}년)</th><td>{representative_rate:,.2f} 원</td></tr>
+                <tr><th>원화환산액</th><td>{unit_krw_display:,} 원</td><th>현재재고 / 재고금액</th><td><b>{current_stock:,} 개 / {total_val_krw:,} 원</b></td></tr>
                 <tr><th>비고</th><td colspan="3">{clean_val(item.get('remark'))}</td></tr>
             </table>
             """
@@ -194,13 +221,13 @@ def render_a4_spec_card(item_code):
         st.markdown("---")
         st.markdown("### 📥 1. 입고 내역")
         if not df_in.empty:
-            st.dataframe(df_in, column_config={"단가": st.column_config.NumberColumn(format="%d"), "원화환산액": st.column_config.NumberColumn(format="%d 원"), "총금액": st.column_config.NumberColumn(format="%d 원")}, use_container_width=True)
+            st.dataframe(df_in, column_config={"단가": st.column_config.NumberColumn(format="%,.2f"), "원화환산액": st.column_config.NumberColumn(format="%d 원"), "총금액": st.column_config.NumberColumn(format="%d 원")}, use_container_width=True)
         else:
             st.caption("※ 입고 내역이 없습니다.")
 
         st.markdown("### 📤 2. 출고 내역")
         if not df_out.empty:
-            st.dataframe(df_out, column_config={"단가": st.column_config.NumberColumn(format="%d"), "원화환산액": st.column_config.NumberColumn(format="%d 원"), "총금액": st.column_config.NumberColumn(format="%d 원")}, use_container_width=True)
+            st.dataframe(df_out, column_config={"단가": st.column_config.NumberColumn(format="%,.2f"), "원화환산액": st.column_config.NumberColumn(format="%d 원"), "총금액": st.column_config.NumberColumn(format="%d 원")}, use_container_width=True)
         else:
             st.caption("※ 출고 내역이 없습니다.")
 
@@ -267,7 +294,7 @@ if user.get("is_admin") == 1:
 menu = st.sidebar.radio("메뉴 이동:", menu_list)
 
 # ---------------------------------------------------------
-# 메뉴 1: 재고 현황판 (초기재고 0개 포함 전체 품목 기준 마스터 조회)
+# 메뉴 1: 재고 현황판
 # ---------------------------------------------------------
 if menu == MENU_STOCK:
     st.subheader("📊 현재 품목별/Lot별 재고 현황판 (초기재고 0개 포함)")
@@ -275,13 +302,17 @@ if menu == MENU_STOCK:
 
     search_kw = st.text_input("🔍 통합 검색 (품명, 코드, 상세번호, 규격, 구분, 분류체계, 구역, Maker 등)", "")
 
-    # 모든 품목 마스터(items)와 재고 Lot 데이터 가져오기
-    items_resp = db.supabase.table("items").select("*").execute()
-    all_items = items_resp.data or []
-    
+    try:
+        items_query = db.supabase.table("items").select("*")
+        if search_kw:
+            items_query = items_query.or_(f"item_name.ilike.%{search_kw}%,item_code.ilike.%{search_kw}%,model_spec.ilike.%{search_kw}%,maker.ilike.%{search_kw}%,zone.ilike.%{search_kw}%")
+        items_resp = items_query.limit(200).execute()
+        all_items = items_resp.data or []
+    except Exception:
+        all_items = db.supabase.table("items").select("*").limit(200).execute().data or []
+
     lots_data = db.get_stock_by_lots() or []
     
-    # item_code별 누적 현재고 및 Lot 정보 매핑
     lot_map = {}
     for lot in lots_data:
         icode = lot.get("item_code")
@@ -304,7 +335,6 @@ if menu == MENU_STOCK:
         item_lots = lot_map.get(icode, [])
         
         if item_lots:
-            # Lot이 존재하는 경우 개별 Lot 단위로 행 생성
             for lot in item_lots:
                 qty = safe_int_clean(lot.get("current_qty"), 0)
                 price = safe_float(lot.get("unit_price"), base_price)
@@ -335,7 +365,6 @@ if menu == MENU_STOCK:
                     "재고금액": stock_amt
                 })
         else:
-            # Lot이 없는 경우(초기재고 0개 품목) 품목 마스터 기준으로 1행 생성
             year = get_year_from_date(base_in_date)
             rate = get_exchange_rate_by_year(curr, year)
             unit_krw = round(base_price * rate)
@@ -362,11 +391,6 @@ if menu == MENU_STOCK:
 
     if table_rows:
         df_stock = pd.DataFrame(table_rows)
-
-        if search_kw:
-            kw = search_kw.lower()
-            mask = df_stock.astype(str).apply(lambda col: col.str.lower().str.contains(kw, na=False)).any(axis=1)
-            df_stock = df_stock[mask]
 
         col1, col2, col3 = st.columns([2, 2, 2])
         col1.metric("조회된 품목/Lot 수", f"{len(df_stock)} 개")
@@ -417,16 +441,19 @@ if menu == MENU_STOCK:
 elif menu == MENU_TRANS:
     st.subheader("📝 자재 입출고 등록 (Lot 단가 분리 & FIFO 선입선출)")
 
-    items_resp = db.supabase.table("items").select("item_code, item_name, item_detail_no, maker, unit_price, currency").execute()
-    items_list = items_resp.data or []
+    search_kw_trans = st.text_input("🔍 대상 품목 실시간 검색 (품명, 코드 등)", "")
+    try:
+        t_query = db.supabase.table("items").select("item_code, item_name, item_detail_no, maker, unit_price, currency")
+        if search_kw_trans:
+            t_query = t_query.or_(f"item_name.ilike.%{search_kw_trans}%,item_code.ilike.%{search_kw_trans}%")
+        items_list = t_query.limit(50).execute().data or []
+    except Exception:
+        items_list = db.supabase.table("items").select("item_code, item_name, item_detail_no, maker, unit_price, currency").limit(50).execute().data or []
 
     if not items_list:
-        st.warning("등록된 품목이 없습니다. '품목 관리'에서 품목을 먼저 등록하세요.")
+        st.warning("조건에 일치하는 품목이 없습니다. '품목 관리'에서 품목을 먼저 등록하세요.")
     else:
-        search_kw = st.text_input("🔍 품목 실시간 검색 (품명, 코드, Maker 등)", "")
-        filtered = [i for i in items_list if search_kw.lower() in f"{i['item_code']} {i['item_name']} {i.get('maker','')} {i.get('item_detail_no','')}".lower()] if search_kw else items_list
-
-        item_opts = {f"[{i['item_code']}] {i['item_name']} (상세: {i.get('item_detail_no','-')})": i for i in filtered}
+        item_opts = {f"[{i['item_code']}] {i['item_name']} (상세: {i.get('item_detail_no','-')})": i for i in items_list}
         
         selected_label = st.selectbox("🎯 대상 품목 선택", list(item_opts.keys()), key="trans_select")
         target_item = item_opts[selected_label]
@@ -545,54 +572,49 @@ elif menu == MENU_ITEMS:
 
     with tab2:
         st.markdown("#### ✏️ 기존 품목 정보 수정")
-        items_resp = db.supabase.table("items").select("*").execute()
-        all_items = items_resp.data or []
+        edit_search = st.text_input("🔍 수정할 품목 검색 (품명, 코드, 규격, Maker 등)", "", key="edit_search_box")
         
-        if all_items:
-            edit_search = st.text_input("🔍 수정할 품목 검색 (품명, 코드, 규격, Maker 등)", "", key="edit_search_box")
-            filtered_edit_items = all_items
+        try:
+            e_query = db.supabase.table("items").select("*")
             if edit_search:
-                esk = edit_search.lower()
-                filtered_edit_items = [
-                    i for i in all_items 
-                    if esk in f"{i.get('item_code','')} {i.get('item_name','')} {i.get('model_spec','')} {i.get('maker','')}".lower()
-                ]
+                e_query = e_query.or_(f"item_name.ilike.%{edit_search}%,item_code.ilike.%{edit_search}%,model_spec.ilike.%{edit_search}%")
+            filtered_edit_items = e_query.limit(100).execute().data or []
+        except Exception:
+            filtered_edit_items = db.supabase.table("items").select("*").limit(100).execute().data or []
 
-            if filtered_edit_items:
-                edit_opts = {f"[{i['item_code']}] {i['item_name']} (규격: {i.get('model_spec','-')})": i for i in filtered_edit_items}
-                sel_edit = st.selectbox("수정할 품목 선택:", list(edit_opts.keys()))
-                t = edit_opts[sel_edit]
+        if filtered_edit_items:
+            edit_opts = {f"[{i['item_code']}] {i['item_name']} (규격: {i.get('model_spec','-')})": i for i in filtered_edit_items}
+            sel_edit = st.selectbox("수정할 품목 선택:", list(edit_opts.keys()))
+            t = edit_opts[sel_edit]
 
-                with st.form("edit_item_form"):
-                    col1, col2 = st.columns(2)
-                    e_name = col1.text_input("품명", value=safe_str_clean(t.get("item_name")))
-                    e_detail = col2.text_input("아이템상세번호", value=safe_str_clean(t.get("item_detail_no")))
+            with st.form("edit_item_form"):
+                col1, col2 = st.columns(2)
+                e_name = col1.text_input("품명", value=safe_str_clean(t.get("item_name")))
+                e_detail = col2.text_input("아이템상세번호", value=safe_str_clean(t.get("item_detail_no")))
 
-                    col3, col4, col5 = st.columns(3)
-                    e_spec = col3.text_input("규격", value=safe_str_clean(t.get("model_spec")))
-                    e_price = col4.number_input("단가", value=safe_float(t.get("unit_price")))
-                    
-                    curr_list = ["KRW", "USD", "EUR", "JPY"]
-                    curr_idx = curr_list.index(t.get("currency", "KRW")) if t.get("currency") in curr_list else 0
-                    e_curr = col5.selectbox("화폐", curr_list, index=curr_idx)
+                col3, col4, col5 = st.columns(3)
+                e_spec = col3.text_input("규격", value=safe_str_clean(t.get("model_spec")))
+                e_price = col4.number_input("단가", value=safe_float(t.get("unit_price")))
+                
+                curr_list = ["KRW", "USD", "EUR", "JPY"]
+                curr_idx = curr_list.index(t.get("currency", "KRW")) if t.get("currency") in curr_list else 0
+                e_curr = col5.selectbox("화폐", curr_list, index=curr_idx)
 
-                    e_remark = st.text_input("비고", value=safe_str_clean(t.get("remark")))
-                    if st.form_submit_button("품목 정보 수정 완료"):
-                        with st.spinner("⏳ 품목 정보 수정 중..."):
-                            db.supabase.table("items").update({
-                                "item_name": safe_str_clean(e_name),
-                                "item_detail_no": safe_str_clean(e_detail),
-                                "model_spec": safe_str_clean(e_spec),
-                                "unit_price": e_price,
-                                "currency": e_curr,
-                                "remark": safe_str_clean(e_remark)
-                            }).eq("item_code", t["item_code"]).execute()
-                            st.success("✅ 수정 완료!")
-                            st.rerun()
-            else:
-                st.info("검색 결과와 일치하는 품목이 없습니다.")
+                e_remark = st.text_input("비고", value=safe_str_clean(t.get("remark")))
+                if st.form_submit_button("품목 정보 수정 완료"):
+                    with st.spinner("⏳ 품목 정보 수정 중..."):
+                        db.supabase.table("items").update({
+                            "item_name": safe_str_clean(e_name),
+                            "item_detail_no": safe_str_clean(e_detail),
+                            "model_spec": safe_str_clean(e_spec),
+                            "unit_price": e_price,
+                            "currency": e_curr,
+                            "remark": safe_str_clean(e_remark)
+                        }).eq("item_code", t["item_code"]).execute()
+                        st.success("✅ 수정 완료!")
+                        st.rerun()
         else:
-            st.info("등록된 품목이 없습니다.")
+            st.info("검색 결과와 일치하는 품목이 없습니다.")
 
     with tab3:
         st.markdown("#### 📂 엑셀 대량 등록 및 양식 다운로드")
@@ -711,8 +733,15 @@ elif menu == MENU_HISTORY:
     st.subheader("🔍 입출고 통합 이력 조회 및 분석")
     st.caption("💡 표에서 행을 선택하거나 검색하여 해당 품목의 입고 및 출고 내역과 금액 합계를 확인할 수 있습니다.")
 
-    resp = db.supabase.table("stock_transactions").select("*").order("trans_date", desc=True).execute()
-    trans_data = resp.data or []
+    hist_search = st.text_input("🔍 입출고 내역 통합 검색 (품명, 코드, 요청자, 담당자 등)", "")
+    
+    try:
+        h_query = db.supabase.table("stock_transactions").select("*").order("trans_date", desc=True)
+        if hist_search:
+            h_query = h_query.or_(f"item_code.ilike.%{hist_search}%,requester.ilike.%{hist_search}%,manager.ilike.%{hist_search}%")
+        trans_data = h_query.limit(200).execute().data or []
+    except Exception:
+        trans_data = db.supabase.table("stock_transactions").select("*").order("trans_date", desc=True).limit(200).execute().data or []
 
     if trans_data:
         items_resp = db.supabase.table("items").select("item_code, item_name, currency").execute()
@@ -753,15 +782,8 @@ elif menu == MENU_HISTORY:
 
         df_trans_all = pd.DataFrame(table_rows)
 
-        hist_search = st.text_input("🔍 입출고 내역 통합 검색 (품명, 코드, 요청자, 담당자 등)", "")
-        df_filtered = df_trans_all
-        if hist_search:
-            h_kw = hist_search.lower()
-            mask = df_trans_all.astype(str).apply(lambda col: col.str.lower().str.contains(h_kw, na=False)).any(axis=1)
-            df_filtered = df_trans_all[mask]
-
         selection_event = st.dataframe(
-            df_filtered,
+            df_trans_all,
             column_config={
                 "단가": st.column_config.NumberColumn(format="%,.2f"),
                 "원화환산액": st.column_config.NumberColumn(format="%d 원"),
@@ -774,8 +796,8 @@ elif menu == MENU_HISTORY:
         )
 
         selected_rows = selection_event.selection.rows if selection_event and hasattr(selection_event, "selection") else []
-        if selected_rows and selected_rows[0] < len(df_filtered):
-            sel_row = df_filtered.iloc[selected_rows[0]]
+        if selected_rows and selected_rows[0] < len(df_trans_all):
+            sel_row = df_trans_all.iloc[selected_rows[0]]
             sel_item_code = sel_row["품목코드"]
             sel_item_name = sel_row["품명"]
 
