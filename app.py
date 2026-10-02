@@ -112,7 +112,6 @@ def render_a4_spec_card(item_code):
         return
     item = item_resp.data[0]
 
-    # 해당 품목의 모든 유효한 Lot 가져오기
     lots_resp = db.supabase.table("stock_lots").select("current_qty, unit_price, inbound_date").eq("item_code", item_code).gt("current_qty", 0).execute()
     lots = lots_resp.data or []
     
@@ -122,7 +121,6 @@ def render_a4_spec_card(item_code):
     base_price = safe_float(item.get("unit_price"), 0.0)
     base_in_date = item.get("in_date", str(datetime.date.today()))
 
-    # Lot별 정밀 집계 계산 (총 재고금액 = 각 Lot별 수량 × 단가 × 해당연도 환율의 합계)
     total_val_krw = 0
     representative_price = base_price
     representative_rate = 1.0
@@ -194,7 +192,7 @@ def render_a4_spec_card(item_code):
 
     with st.container():
         st.markdown("<div class='a4-card'>", unsafe_allow_html=True)
-        st.markdown(f"<div class='a4-header'><h2>자 재 품 목 명 세 서</h2><p>발행일자: {datetime.date.today()}</p></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='a4-header'><h2>자 제 품 목 명 세 서</h2><p>발행일자: {datetime.date.today()}</p></div>", unsafe_allow_html=True)
         col_img, col_info = st.columns([1, 3])
 
         with col_img:
@@ -439,7 +437,7 @@ if menu == MENU_STOCK:
 # 메뉴 2: 입출고 등록
 # ---------------------------------------------------------
 elif menu == MENU_TRANS:
-    st.subheader("📝 자재 입출고 등록 (Lot 단가 분리 & FIFO 선입선출)")
+    st.subheader("📝 자재 입출고 등록 (FIFO 선입선출)")
 
     search_kw_trans = st.text_input("🔍 대상 품목 실시간 검색 (품명, 코드 등)", "")
     try:
@@ -507,7 +505,7 @@ elif menu == MENU_TRANS:
 # ---------------------------------------------------------
 elif menu == MENU_ITEMS:
     st.subheader("🏷️ 품목 등록 및 수정 관리")
-    tab1, tab2, tab3 = st.tabs(["✍️ 개별 직접 등록", "✏️ 기존 품목 수정", "📂 엑셀 일괄 등록"])
+    tab1, tab2, tab3 = st.tabs(["✍️ 개별 직접 등록", "✏️ 기존 품목 수정", "📂 기초 데이터 엑셀 일괄 등록"])
 
     with tab1:
         with st.form("new_item_form", clear_on_submit=True):
@@ -555,7 +553,7 @@ elif menu == MENU_ITEMS:
                             "category_type": safe_str_clean(category_type),
                             "category_main": safe_str_clean(category_main),
                             "category_sub": safe_str_clean(category_sub),
-                            "shelf_no": safe_str_clean(shelf_no),
+                            "shelf_no": safe_str_clean(category_sub),
                             "zone": safe_str_clean(zone),
                             "device_name": safe_str_clean(device_name),
                             "maker": safe_str_clean(maker),
@@ -617,11 +615,11 @@ elif menu == MENU_ITEMS:
             st.info("검색 결과와 일치하는 품목이 없습니다.")
 
     with tab3:
-        st.markdown("#### 📂 엑셀 대량 등록 및 양식 다운로드")
-        st.caption("아래 표준 양식을 다운로드하여 작성한 후 업로드해 주세요.")
+        st.markdown("#### 📂 기초 데이터 엑셀 일괄 등록 (품목당 1개의 기초 Lot 생성 보장)")
+        st.caption("💡 엑셀 업로드 시 기존 품목의 재고 Lot를 말끔히 초기화한 후, 엑셀에 작성된 내용대로 **품목코드당 단 1개의 기초 Lot**만 정확하게 생성합니다.")
 
         template_df = pd.DataFrame([{
-            "item_code": "",
+            "item_code": "ITEM_00001",
             "item_name": "예시 자재명 (특수문자: Ø, ½, ±)",
             "item_detail_no": "ABC-123",
             "model_spec": "SPEC-01",
@@ -636,25 +634,26 @@ elif menu == MENU_ITEMS:
             "in_date": str(datetime.date.today()),
             "currency": "KRW",
             "unit_price": 50000,
-            "initial_quantity": 0,
-            "remark": "비고 내용 예시"
+            "initial_quantity": 10,
+            "remark": "기초재고 세팅 예시"
         }])
         
         tpl_buffer = io.BytesIO()
         with pd.ExcelWriter(tpl_buffer, engine="openpyxl") as writer:
-            template_df.to_excel(writer, index=False, sheet_name="품목등록양식")
+            template_df.to_excel(writer, index=False, sheet_name="기초데이터등록양식")
         
         st.download_button(
             label="📥 엑셀 표준 양식 다운로드 (.xlsx)",
             data=tpl_buffer.getvalue(),
-            file_name="ERP_품목등록_표준양식.xlsx",
+            file_name="ERP_기초데이터_표준양식.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
         st.markdown("---")
 
-        uploaded_excel = st.file_uploader("📂 작성된 엑셀 파일 선택 (.xlsx)", type=["xlsx"])
-        if uploaded_excel and st.button("🚀 DB 일괄 등록 및 재고 생성 실행"):
-            with st.spinner("⏳ 엑셀 데이터 분석 및 Supabase DB 등록 중입니다..."):
+        uploaded_excel = st.file_uploader("📂 작성된 기초 데이터 엑셀 파일 선택 (.xlsx)", type=["xlsx"])
+
+        if uploaded_excel and st.button("🚀 기초 데이터 일괄 세팅 실행"):
+            with st.spinner("⏳ 기초 데이터를 분석하고 품목당 1개의 기초 Lot을 생성 중입니다..."):
                 try:
                     df_up = pd.read_excel(uploaded_excel, dtype=str)
                     success_count = 0
@@ -665,15 +664,9 @@ elif menu == MENU_ITEMS:
                         if not i_name or i_name == "-":
                             continue
 
-                        raw_code = safe_str_clean(r.get("item_code"))
-                        if raw_code and raw_code != "-":
-                            i_code = raw_code
-                        else:
-                            check_resp = db.supabase.table("items").select("item_code").eq("item_name", i_name).execute()
-                            if check_resp.data:
-                                i_code = check_resp.data[0]["item_code"]
-                            else:
-                                i_code = generate_next_item_code()
+                        i_code = safe_str_clean(r.get("item_code"))
+                        if not i_code or i_code == "-":
+                            i_code = generate_next_item_code()
 
                         u_price = safe_float(r.get("unit_price"), 0.0)
                         init_qty = safe_int_clean(r.get("initial_quantity"), 0)
@@ -703,9 +696,15 @@ elif menu == MENU_ITEMS:
                         if existing_photo:
                             item_payload["photo_url"] = existing_photo
 
+                        # 1. 품목 마스터 등록/갱신
                         db.supabase.table("items").upsert(item_payload).execute()
                         success_count += 1
 
+                        # 2. 기존 재고 Lot 및 관련 거래내역을 완전히 초기화 (중복 쪼개짐 방지)
+                        db.supabase.table("stock_lots").delete().eq("item_code", i_code).execute()
+                        db.supabase.table("stock_transactions").delete().eq("item_code", i_code).execute()
+
+                        # 3. 기초 수량이 있는 경우 품목당 단 1개의 기초 Lot 및 입고 거래 생성
                         if init_qty > 0:
                             db.register_inbound_lot(
                                 item_code=i_code,
@@ -718,13 +717,13 @@ elif menu == MENU_ITEMS:
                             stock_count += 1
 
                     if success_count > 0:
-                        st.success(f"🎉 총 {success_count}개 품목 등록/갱신 완료! (신규 입고 Lot 생성: {stock_count}건)")
+                        st.success(f"🎉 총 {success_count}개 품목 기초 데이터 세팅 완료! (기초 Lot 생성: {stock_count}건)")
                         st.rerun()
                     else:
-                        st.warning("⚠️ 엑셀 내 유효한 품명 데이터가 없어 등록되지 않았습니다.")
+                        st.warning("⚠️ 엑셀 내 유효한 데이터가 없습니다.")
 
                 except Exception as e:
-                    st.error(f"엑셀 업로드 처리 중 오류 발생: {e}")
+                    st.error(f"기초 데이터 업로드 처리 중 오류 발생: {e}")
 
 # ---------------------------------------------------------
 # 메뉴 4: 입출고 내역 조회
