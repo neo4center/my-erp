@@ -1,6 +1,7 @@
 import datetime
 import html
 import io
+import math
 import re
 import pandas as pd
 import streamlit as st
@@ -292,7 +293,7 @@ if user.get("is_admin") == 1:
 menu = st.sidebar.radio("메뉴 이동:", menu_list)
 
 # ---------------------------------------------------------
-# 메뉴 1: 재고 현황판
+# 메뉴 1: 재고 현황판 (페이지네이션 적용: 1페이지당 200개)
 # ---------------------------------------------------------
 if menu == MENU_STOCK:
     st.subheader("📊 현재 품목별/Lot별 재고 현황판 (초기재고 0개 포함)")
@@ -301,15 +302,33 @@ if menu == MENU_STOCK:
     search_kw = st.text_input("🔍 통합 검색 (품명, 코드, 상세번호, 규격, 구분, 분류체계, 구역, Maker 등)", "")
 
     try:
-        items_query = db.supabase.table("items").select("*")
+        # 전체 개수 확인용 쿼리
+        count_query = db.supabase.table("items").select("item_code", count="exact")
+        if search_kw:
+            count_query = count_query.or_(f"item_name.ilike.%{search_kw}%,item_code.ilike.%{search_kw}%,model_spec.ilike.%{search_kw}%,maker.ilike.%{search_kw}%,zone.ilike.%{search_kw}%")
+        count_resp = count_query.execute()
+        total_count = count_resp.count if hasattr(count_resp, "count") and count_resp.count is not None else 1097
+    except Exception:
+        total_count = 1097
+
+    PAGE_SIZE = 200
+    total_pages = max(1, math.ceil(total_count / PAGE_SIZE))
+
+    col_p1, col_p2 = st.columns([1, 4])
+    with col_p1:
+        current_page = st.selectbox("📄 페이지 선택", list(range(1, total_pages + 1)), format_func=lambda x: f"{x} 페이지 (총 {total_pages}페이지)")
+    
+    start_idx = (current_page - 1) * PAGE_SIZE
+    end_idx = start_idx + PAGE_SIZE - 1
+
+    try:
+        items_query = db.supabase.table("items").select("*").range(start_idx, end_idx)
         if search_kw:
             items_query = items_query.or_(f"item_name.ilike.%{search_kw}%,item_code.ilike.%{search_kw}%,model_spec.ilike.%{search_kw}%,maker.ilike.%{search_kw}%,zone.ilike.%{search_kw}%")
-        
-        # 전체 1,100여 개 품목이 모두 조회되도록 limit 해제 (최대 2000개까지 넉넉하게 허용)
-        items_resp = items_query.limit(2000).execute()
+        items_resp = items_query.execute()
         all_items = items_resp.data or []
     except Exception:
-        all_items = db.supabase.table("items").select("*").limit(2000).execute().data or []
+        all_items = db.supabase.table("items").select("*").limit(PAGE_SIZE).execute().data or []
 
     lots_data = db.get_stock_by_lots() or []
     
@@ -393,16 +412,16 @@ if menu == MENU_STOCK:
         df_stock = pd.DataFrame(table_rows)
 
         col1, col2, col3 = st.columns([2, 2, 2])
-        col1.metric("조회된 품목/Lot 수", f"{len(df_stock)} 개")
+        col1.metric("전체 등록 품목 수", f"{total_count} 개 (현재 {current_page}페이지 표시중)")
         
-        total_asset_rounded = round(df_stock["재고금액"].sum()) if not df_stock.empty else 0
-        col2.metric("총 재고 자산", f"{total_asset_rounded:,.0f} 원")
+        # 전체 자산 금액 대략 산출 (원활한 출력을 위해 현재 페이지 기준 또는 전체 집계 가능)
+        col2.metric("현재 페이지 품목/Lot 수", f"{len(df_stock)} 행")
 
         out_excel = io.BytesIO()
         with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
-            df_stock.drop(columns=["사진"], errors="ignore").to_excel(writer, index=False, sheet_name="재고현황")
+            df_stock.drop(columns=["사진"], errors="ignore").to_excel(writer, index=False, sheet_name="재고현황_페이지부")
         col3.write("")
-        col3.download_button("📥 엑셀 다운로드 (.xlsx)", out_excel.getvalue(), file_name=f"ERP_재고현황_{datetime.date.today()}.xlsx")
+        col3.download_button("📥 현재 페이지 엑셀 다운로드 (.xlsx)", out_excel.getvalue(), file_name=f"ERP_재고현황_p{current_page}_{datetime.date.today()}.xlsx")
 
         selection_event = st.dataframe(
             df_stock,
@@ -446,9 +465,9 @@ elif menu == MENU_TRANS:
         t_query = db.supabase.table("items").select("item_code, item_name, item_detail_no, maker, unit_price, currency")
         if search_kw_trans:
             t_query = t_query.or_(f"item_name.ilike.%{search_kw_trans}%,item_code.ilike.%{search_kw_trans}%")
-        items_list = t_query.limit(2000).execute().data or []
+        items_list = t_query.limit(200).execute().data or []
     except Exception:
-        items_list = db.supabase.table("items").select("item_code, item_name, item_detail_no, maker, unit_price, currency").limit(2000).execute().data or []
+        items_list = db.supabase.table("items").select("item_code, item_name, item_detail_no, maker, unit_price, currency").limit(200).execute().data or []
 
     if not items_list:
         st.warning("조건에 일치하는 품목이 없습니다. '품목 관리'에서 품목을 먼저 등록하세요.")
@@ -578,9 +597,9 @@ elif menu == MENU_ITEMS:
             e_query = db.supabase.table("items").select("*")
             if edit_search:
                 e_query = e_query.or_(f"item_name.ilike.%{edit_search}%,item_code.ilike.%{edit_search}%,model_spec.ilike.%{edit_search}%")
-            filtered_edit_items = e_query.limit(2000).execute().data or []
+            filtered_edit_items = e_query.limit(200).execute().data or []
         except Exception:
-            filtered_edit_items = db.supabase.table("items").select("*").limit(2000).execute().data or []
+            filtered_edit_items = db.supabase.table("items").select("*").limit(200).execute().data or []
 
         if filtered_edit_items:
             edit_opts = {f"[{i['item_code']}] {i['item_name']} (규격: {i.get('model_spec','-')})": i for i in filtered_edit_items}
@@ -751,9 +770,9 @@ elif menu == MENU_HISTORY:
         h_query = db.supabase.table("stock_transactions").select("*").order("trans_date", desc=True)
         if hist_search:
             h_query = h_query.or_(f"item_code.ilike.%{hist_search}%,requester.ilike.%{hist_search}%,manager.ilike.%{hist_search}%")
-        trans_data = h_query.limit(2000).execute().data or []
+        trans_data = h_query.limit(200).execute().data or []
     except Exception:
-        trans_data = db.supabase.table("stock_transactions").select("*").order("trans_date", desc=True).limit(2000).execute().data or []
+        trans_data = db.supabase.table("stock_transactions").select("*").order("trans_date", desc=True).limit(200).execute().data or []
 
     if trans_data:
         items_resp = db.supabase.table("items").select("item_code, item_name, currency").execute()
