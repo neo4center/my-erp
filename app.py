@@ -35,6 +35,14 @@ def safe_str(val, default=""):
     s = str(val).strip()
     return "" if s.lower() == "nan" else s
 
+def clean_date(val):
+    if pd.isna(val) or val is None:
+        return str(datetime.date.today())
+    if isinstance(val, (datetime.date, datetime.datetime, pd.Timestamp)):
+        return val.strftime("%Y-%m-%d")
+    s = str(val).strip().split(" ")[0]
+    return s if len(s) >= 8 else str(datetime.date.today())
+
 def clean_val(val, default="-"):
     if pd.isna(val) or val is None:
         return default
@@ -62,19 +70,16 @@ def render_a4_spec_card(item_code):
         return
     item = item_resp.data[0]
 
-    # 잔여 재고 계산 (stock_lots 기반)
     lots_resp = db.supabase.table("stock_lots").select("current_qty, unit_price").eq("item_code", item_code).gt("current_qty", 0).execute()
     lots = lots_resp.data or []
     current_stock = sum(l["current_qty"] for l in lots)
     
-    # 단가 및 화폐 (최신 Lot 또는 items 단가)
     latest_price = lots[0]["unit_price"] if lots else safe_float(item.get("unit_price"))
     curr = item.get("currency", "KRW")
     rate = get_exchange_rate(curr)
     unit_krw = int(latest_price * rate)
     val_krw = int(unit_krw * current_stock)
 
-    # 입출고 이력
     trans_resp = db.supabase.table("stock_transactions").select("*").eq("item_code", item_code).order("trans_date", desc=True).execute()
     trans_data = trans_resp.data or []
     df_in = pd.DataFrame([t for t in trans_data if t["trans_type"] in ["IN", "입고"]])
@@ -147,25 +152,26 @@ if st.session_state.logged_in_user is None:
         submitted = st.form_submit_button("로그인")
         
         if submitted:
-            if emp_no.strip() and pw.strip():
-                resp = db.supabase.table("users").select("*").eq("emp_no", emp_no.strip()).eq("password", pw.strip()).execute()
-                if resp.data:
-                    u = resp.data[0]
-                    st.session_state.logged_in_user = {
-                        "emp_no": u["emp_no"],
-                        "name": u["name"],
-                        "position": u["position"],
-                        "is_admin": u.get("is_admin", 0)
-                    }
-                    st.success(f"환영합니다, {u['name']} {u['position']}님!")
-                    st.rerun()
-                elif emp_no == "admin" and pw == "admin":
-                    st.session_state.logged_in_user = {"emp_no": "admin", "name": "시스템관리자", "position": "팀장", "is_admin": 1}
-                    st.rerun()
+            with st.spinner("⏳ 사용자 인증 중입니다..."):
+                if emp_no.strip() and pw.strip():
+                    resp = db.supabase.table("users").select("*").eq("emp_no", emp_no.strip()).eq("password", pw.strip()).execute()
+                    if resp.data:
+                        u = resp.data[0]
+                        st.session_state.logged_in_user = {
+                            "emp_no": u["emp_no"],
+                            "name": u["name"],
+                            "position": u["position"],
+                            "is_admin": u.get("is_admin", 0)
+                        }
+                        st.success(f"환영합니다, {u['name']} {u['position']}님!")
+                        st.rerun()
+                    elif emp_no == "admin" and pw == "admin":
+                        st.session_state.logged_in_user = {"emp_no": "admin", "name": "시스템관리자", "position": "팀장", "is_admin": 1}
+                        st.rerun()
+                    else:
+                        st.error("❌ 사번 또는 비밀번호가 올바르지 않습니다.")
                 else:
-                    st.error("❌ 사번 또는 비밀번호가 올바르지 않습니다.")
-            else:
-                st.error("사번과 비밀번호를 입력하세요.")
+                    st.error("사번과 비밀번호를 입력하세요.")
     st.stop()
 
 # ---------------------------------------------------------
@@ -308,30 +314,31 @@ elif menu == "📝 입출고 등록":
                 if not requester:
                     st.error("요청자는 필수 입력 항목입니다.")
                 else:
-                    if trans_type == "입고":
-                        db.register_inbound_lot(
-                            item_code=item_code,
-                            item_name=target_item["item_name"],
-                            category=target_item.get("category_type", "일반"),
-                            inbound_date=str(trans_date),
-                            unit_price=unit_price,
-                            quantity=quantity
-                        )
-                        st.success(f"✅ [{item_code}] {quantity}개 입고 등록이 완료되었습니다.")
-                    else:
-                        success = db.process_fifo_outbound(
-                            item_code=item_code,
-                            outbound_qty=quantity,
-                            trans_date=str(trans_date)
-                        )
-                    st.rerun()
+                    with st.spinner("⏳ 입출고 데이터를 처리 중입니다..."):
+                        if trans_type == "입고":
+                            db.register_inbound_lot(
+                                item_code=item_code,
+                                item_name=target_item["item_name"],
+                                category=target_item.get("category_type", "일반"),
+                                inbound_date=str(trans_date),
+                                unit_price=unit_price,
+                                quantity=quantity
+                            )
+                            st.success(f"✅ [{item_code}] {quantity}개 입고 등록이 완료되었습니다.")
+                        else:
+                            success = db.process_fifo_outbound(
+                                item_code=item_code,
+                                outbound_qty=quantity,
+                                trans_date=str(trans_date)
+                            )
+                        st.rerun()
 
         st.markdown("---")
         st.subheader(f"📄 선택 품목 [{item_code}] 실시간 상세 명세서")
         render_a4_spec_card(item_code)
 
 # ---------------------------------------------------------
-# 메뉴 3: 품목 관리 (엑셀 등록 시 재고 자동 생성 연동)
+# 메뉴 3: 품목 관리 (로딩 스피너 및 안전한 엑셀 일괄 등록)
 # ---------------------------------------------------------
 elif menu == "🏷️ 품목 관리":
     st.subheader("🏷️ 품목 등록 및 수정 관리")
@@ -371,18 +378,19 @@ elif menu == "🏷️ 품목 관리":
                 if not item_name or not item_code:
                     st.error("품목코드와 품명은 필수입니다.")
                 else:
-                    photo_url = db.upload_item_image(img_file, item_code) if img_file else None
-                    item_data = {
-                        "item_code": item_code, "item_name": item_name, "item_detail_no": item_detail_no,
-                        "model_spec": model_spec, "category_type": category_type, "category_main": category_main,
-                        "category_sub": category_sub, "shelf_no": shelf_no, "zone": zone, "device_name": device_name,
-                        "maker": maker, "useful_life": useful_life, "in_date": in_date, "currency": currency,
-                        "unit_price": unit_price, "remark": remark
-                    }
-                    if photo_url: item_data["photo_url"] = photo_url
-                    db.supabase.table("items").upsert(item_data).execute()
-                    st.success(f"🎉 신규 품목 [{item_code}] 저장 완료!")
-                    st.rerun()
+                    with st.spinner("⏳ 이미지 압축 및 데이터 저장 중..."):
+                        photo_url = db.upload_item_image(img_file, item_code) if img_file else None
+                        item_data = {
+                            "item_code": item_code, "item_name": item_name, "item_detail_no": item_detail_no,
+                            "model_spec": model_spec, "category_type": category_type, "category_main": category_main,
+                            "category_sub": category_sub, "shelf_no": shelf_no, "zone": zone, "device_name": device_name,
+                            "maker": maker, "useful_life": useful_life, "in_date": in_date, "currency": currency,
+                            "unit_price": unit_price, "remark": remark
+                        }
+                        if photo_url: item_data["photo_url"] = photo_url
+                        db.supabase.table("items").upsert(item_data).execute()
+                        st.success(f"🎉 신규 품목 [{item_code}] 저장 완료!")
+                        st.rerun()
 
     with tab2:
         items_resp = db.supabase.table("items").select("*").execute()
@@ -404,12 +412,13 @@ elif menu == "🏷️ 품목 관리":
 
                 e_remark = st.text_input("비고", value=safe_str(t.get("remark")))
                 if st.form_submit_button("품목 정보 수정 완료"):
-                    db.supabase.table("items").update({
-                        "item_name": e_name, "item_detail_no": e_detail, "model_spec": e_spec,
-                        "unit_price": e_price, "currency": e_curr, "remark": e_remark
-                    }).eq("item_code", t["item_code"]).execute()
-                    st.success("✅ 수정 완료!")
-                    st.rerun()
+                    with st.spinner("⏳ 품목 정보 수정 중..."):
+                        db.supabase.table("items").update({
+                            "item_name": e_name, "item_detail_no": e_detail, "model_spec": e_spec,
+                            "unit_price": e_price, "currency": e_curr, "remark": e_remark
+                        }).eq("item_code", t["item_code"]).execute()
+                        st.success("✅ 수정 완료!")
+                        st.rerun()
 
     with tab3:
         st.markdown("#### 📂 엑셀 대량 등록 및 양식 다운로드")
@@ -449,58 +458,67 @@ elif menu == "🏷️ 품목 관리":
 
         uploaded_excel = st.file_uploader("📂 작성된 엑셀 파일 선택 (.xlsx)", type=["xlsx"])
         if uploaded_excel and st.button("🚀 DB 일괄 등록 및 재고 생성 실행"):
-            try:
-                df_up = pd.read_excel(uploaded_excel)
-                success_count = 0
-                stock_count = 0
+            with st.spinner("⏳ 엑셀 파일 읽기 및 Supabase DB 등록 중입니다... 잠시만 기다려 주세요."):
+                try:
+                    df_up = pd.read_excel(uploaded_excel)
+                    success_count = 0
+                    stock_count = 0
 
-                for _, r in df_up.iterrows():
-                    i_code = safe_str(r.get("item_code"))
-                    i_name = safe_str(r.get("item_name"))
-                    if not i_code or not i_name:
-                        continue
+                    for _, r in df_up.iterrows():
+                        i_code = safe_str(r.get("item_code"))
+                        i_name = safe_str(r.get("item_name"))
+                        if not i_code or not i_name:
+                            continue
 
-                    u_price = safe_float(r.get("unit_price"))
-                    init_qty = safe_int(r.get("initial_quantity"), 0)
-                    in_d = safe_str(r.get("in_date"), str(datetime.date.today()))
+                        u_price = safe_float(r.get("unit_price"))
+                        init_qty = safe_int(r.get("initial_quantity"), 0)
+                        in_d = clean_date(r.get("in_date"))
 
-                    # 1) items 마스터 등록
-                    db.supabase.table("items").upsert({
-                        "item_code": i_code,
-                        "item_name": i_name,
-                        "item_detail_no": safe_str(r.get("item_detail_no")),
-                        "model_spec": safe_str(r.get("model_spec")),
-                        "category_type": safe_str(r.get("category_type")),
-                        "category_main": safe_str(r.get("category_main")),
-                        "category_sub": safe_str(r.get("category_sub")),
-                        "shelf_no": safe_str(r.get("shelf_no")),
-                        "zone": safe_str(r.get("zone")),
-                        "device_name": safe_str(r.get("device_name")),
-                        "maker": safe_str(r.get("maker")),
-                        "useful_life": safe_str(r.get("useful_life")),
-                        "in_date": in_d,
-                        "currency": safe_str(r.get("currency"), "KRW"),
-                        "unit_price": u_price,
-                        "remark": safe_str(r.get("remark"))
-                    }).execute()
-                    success_count += 1
+                        # 기존 이미지 URL 보존을 위해 기존 정보 확인
+                        existing = db.supabase.table("items").select("photo_url").eq("item_code", i_code).execute()
+                        existing_photo = existing.data[0]["photo_url"] if existing.data and existing.data[0].get("photo_url") else None
 
-                    # 2) 초기 수량이 1개 이상인 경우 stock_lots 및 stock_transactions 생성
-                    if init_qty > 0:
-                        db.register_inbound_lot(
-                            item_code=i_code,
-                            item_name=i_name,
-                            category=safe_str(r.get("category_type"), "일반"),
-                            inbound_date=in_d,
-                            unit_price=u_price,
-                            quantity=init_qty
-                        )
-                        stock_count += 1
+                        item_payload = {
+                            "item_code": i_code,
+                            "item_name": i_name,
+                            "item_detail_no": safe_str(r.get("item_detail_no")),
+                            "model_spec": safe_str(r.get("model_spec")),
+                            "category_type": safe_str(r.get("category_type")),
+                            "category_main": safe_str(r.get("category_main")),
+                            "category_sub": safe_str(r.get("category_sub")),
+                            "shelf_no": safe_str(r.get("shelf_no")),
+                            "zone": safe_str(r.get("zone")),
+                            "device_name": safe_str(r.get("device_name")),
+                            "maker": safe_str(r.get("maker")),
+                            "useful_life": safe_str(r.get("useful_life")),
+                            "in_date": in_d,
+                            "currency": safe_str(r.get("currency"), "KRW"),
+                            "unit_price": u_price,
+                            "remark": safe_str(r.get("remark"))
+                        }
+                        if existing_photo:
+                            item_payload["photo_url"] = existing_photo
 
-                st.success(f"🎉 총 {success_count}개 품목 등록 완료! (초기 재고 Lot 생성: {stock_count}건)")
-                st.rerun()
-            except Exception as e:
-                st.error(f"엑셀 업로드 중 오류 발생: {e}")
+                        # 1) items 마스터 등록 (안전한 Upsert)
+                        db.supabase.table("items").upsert(item_payload).execute()
+                        success_count += 1
+
+                        # 2) 초기 수량이 1개 이상인 경우 stock_lots 및 stock_transactions 생성
+                        if init_qty > 0:
+                            db.register_inbound_lot(
+                                item_code=i_code,
+                                item_name=i_name,
+                                category=safe_str(r.get("category_type"), "일반"),
+                                inbound_date=in_d,
+                                unit_price=u_price,
+                                quantity=init_qty
+                            )
+                            stock_count += 1
+
+                    st.success(f"🎉 총 {success_count}개 품목 등록 완료! (초기 재고 Lot 생성: {stock_count}건)")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"엑셀 업로드 중 오류 발생: {e}")
 
 # ---------------------------------------------------------
 # 메뉴 4: 입출고 내역 조회
@@ -557,9 +575,10 @@ elif menu == "⚙️ 환율 설정":
         r_curr = col2.selectbox("화폐", ["USD", "EUR", "JPY"])
         r_rate = col3.number_input("환율 (KRW)", value=1350.00, step=10.0, format="%.2f")
         if st.form_submit_button("환율 저장"):
-            db.supabase.table("exchange_rates").upsert({"year": r_year, "currency": r_curr, "rate": r_rate}).execute()
-            st.success(f"✅ {r_year}년 {r_curr} 환율 설정 저장 완료!")
-            st.rerun()
+            with st.spinner("⏳ 환율 정보 업데이트 중..."):
+                db.supabase.table("exchange_rates").upsert({"year": r_year, "currency": r_curr, "rate": r_rate}).execute()
+                st.success(f"✅ {r_year}년 {r_curr} 환율 설정 저장 완료!")
+                st.rerun()
 
 # ---------------------------------------------------------
 # 메뉴 6: 사용자 관리 (관리자 전용)
@@ -587,12 +606,13 @@ elif menu == "👥 사용자 관리 (관리자)":
 
             if st.form_submit_button("사용자 계정 생성"):
                 if u_emp and u_pw and u_name:
-                    db.supabase.table("users").insert({
-                        "emp_no": u_emp.strip(), "password": u_pw.strip(),
-                        "name": u_name.strip(), "position": u_pos, "is_admin": 1 if u_admin else 0
-                    }).execute()
-                    st.success(f"✅ 사용자 [{u_name}] 계정 생성 완료!")
-                    st.rerun()
+                    with st.spinner("⏳ 계정 생성 중..."):
+                        db.supabase.table("users").insert({
+                            "emp_no": u_emp.strip(), "password": u_pw.strip(),
+                            "name": u_name.strip(), "position": u_pos, "is_admin": 1 if u_admin else 0
+                        }).execute()
+                        st.success(f"✅ 사용자 [{u_name}] 계정 생성 완료!")
+                        st.rerun()
                 else:
                     st.error("필수 정보를 모두 입력하세요.")
 
@@ -613,17 +633,18 @@ elif menu == "👥 사용자 관리 (관리자)":
                 edit_admin = col4.checkbox("관리자 권한", value=bool(target_u.get("is_admin")))
 
                 if st.form_submit_button("사용자 정보 수정 저장"):
-                    update_payload = {
-                        "name": edit_name.strip(),
-                        "position": edit_pos,
-                        "is_admin": 1 if edit_admin else 0
-                    }
-                    if edit_pw.strip():
-                        update_payload["password"] = edit_pw.strip()
+                    with st.spinner("⏳ 사용자 정보 수정 중..."):
+                        update_payload = {
+                            "name": edit_name.strip(),
+                            "position": edit_pos,
+                            "is_admin": 1 if edit_admin else 0
+                        }
+                        if edit_pw.strip():
+                            update_payload["password"] = edit_pw.strip()
 
-                    db.supabase.table("users").update(update_payload).eq("emp_no", target_u["emp_no"]).execute()
-                    st.success(f"✅ [{target_u['emp_no']}] 사용자 정보가 성공적으로 수정되었습니다.")
-                    st.rerun()
+                        db.supabase.table("users").update(update_payload).eq("emp_no", target_u["emp_no"]).execute()
+                        st.success(f"✅ [{target_u['emp_no']}] 사용자 정보가 성공적으로 수정되었습니다.")
+                        st.rerun()
 
     with tab_user3:
         if users_data:
@@ -636,6 +657,7 @@ elif menu == "👥 사용자 관리 (관리자)":
                 if target_del_emp == user["emp_no"]:
                     st.error("현재 로그인되어 있는 본인 계정은 삭제할 수 없습니다.")
                 else:
-                    db.supabase.table("users").delete().eq("emp_no", target_del_emp).execute()
-                    st.success(f"✅ 사용자 계정 (`{target_del_emp}`)이 성공적으로 삭제되었습니다.")
-                    st.rerun()
+                    with st.spinner("⏳ 계정 삭제 중..."):
+                        db.supabase.table("users").delete().eq("emp_no", target_del_emp).execute()
+                        st.success(f"✅ 사용자 계정 (`{target_del_emp}`)이 성공적으로 삭제되었습니다.")
+                        st.rerun()
