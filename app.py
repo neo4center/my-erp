@@ -1,6 +1,7 @@
 import datetime
 import html
 import io
+import re
 import pandas as pd
 import streamlit as st
 import db_helper as db
@@ -36,7 +37,6 @@ def safe_str_clean(val, default=""):
     s = str(val).strip()
     if s.lower() in ["nan", "null", "none"]:
         return default
-    # Supabase JSON 파싱 오류 및 따옴표 깨짐 방지
     return s.replace('"', '″').replace("'", "′")
 
 def clean_date(val):
@@ -52,6 +52,22 @@ def clean_val(val, default="-"):
         return default
     s = str(val).strip().replace('"', "")
     return html.escape(s) if s and s.lower() != "nan" else default
+
+def generate_next_item_code():
+    """품목코드가 공란일 때 자동으로 ITEM_00001 형태의 신규 코드를 채번"""
+    try:
+        resp = db.supabase.table("items").select("item_code").execute()
+        items = resp.data or []
+        max_num = 0
+        for i in items:
+            code = i.get("item_code", "")
+            # 숫자가 포함되어 있다면 최대값 탐색
+            nums = re.findall(r'\d+', code)
+            if nums:
+                max_num = max(max_num, int(nums[-1]))
+        return f"ITEM_{max_num + 1:05d}"
+    except Exception:
+        return f"ITEM_{int(datetime.datetime.now().timestamp())}"
 
 def get_exchange_rate(currency, year=None):
     if currency == "KRW" or not currency:
@@ -343,7 +359,7 @@ elif menu == "📝 입출고 등록":
         render_a4_spec_card(item_code)
 
 # ---------------------------------------------------------
-# 메뉴 3: 품목 관리 (특수문자 방어 & 엑셀 재고 연동)
+# 메뉴 3: 품목 관리 (품목코드 공란 시 자동 채번 로직 추가)
 # ---------------------------------------------------------
 elif menu == "🏷️ 품목 관리":
     st.subheader("🏷️ 품목 등록 및 수정 관리")
@@ -352,7 +368,7 @@ elif menu == "🏷️ 품목 관리":
     with tab1:
         with st.form("new_item_form", clear_on_submit=True):
             col1, col2, col3 = st.columns(3)
-            item_code = col1.text_input("품목코드 (*필수)", value="N4_0001")
+            item_code = col1.text_input("품목코드 (공란 시 자동 채번)", value="")
             item_name = col2.text_input("품명 (*필수)")
             item_detail_no = col3.text_input("아이템상세번호")
 
@@ -380,13 +396,15 @@ elif menu == "🏷️ 품목 관리":
             img_file = st.file_uploader("품목 사진 첨부 (자동 썸네일 압축 업로드)", type=["png", "jpg", "jpeg"])
 
             if st.form_submit_button("신규 품목 저장"):
-                if not item_name or not item_code:
-                    st.error("품목코드와 품명은 필수입니다.")
+                if not item_name.strip():
+                    st.error("품명은 필수 입력 항목입니다.")
                 else:
                     with st.spinner("⏳ 이미지 압축 및 데이터 저장 중..."):
-                        photo_url = db.upload_item_image(img_file, safe_str_clean(item_code)) if img_file else None
+                        final_code = safe_str_clean(item_code) or generate_next_item_code()
+                        photo_url = db.upload_item_image(img_file, final_code) if img_file else None
+                        
                         item_data = {
-                            "item_code": safe_str_clean(item_code),
+                            "item_code": final_code,
                             "item_name": safe_str_clean(item_name),
                             "item_detail_no": safe_str_clean(item_detail_no),
                             "model_spec": safe_str_clean(model_spec),
@@ -405,7 +423,7 @@ elif menu == "🏷️ 품목 관리":
                         }
                         if photo_url: item_data["photo_url"] = photo_url
                         db.supabase.table("items").upsert(item_data).execute()
-                        st.success(f"🎉 신규 품목 [{item_code}] 저장 완료!")
+                        st.success(f"🎉 신규 품목 [{final_code}] 저장 완료!")
                         st.rerun()
 
     with tab2:
@@ -442,10 +460,10 @@ elif menu == "🏷️ 품목 관리":
 
     with tab3:
         st.markdown("#### 📂 엑셀 대량 등록 및 양식 다운로드")
-        st.caption("아래 표준 양식을 다운로드하여 작성한 후 업로드해 주세요. (특수문자 지원 및 초기 수량이 1개 이상 입력되어야 재고 현황에 즉시 표시됩니다)")
+        st.caption("아래 표준 양식을 다운로드하여 작성한 후 업로드해 주세요. (품목코드가 공란이면 자동으로 신규 코드가 채번됩니다)")
 
         template_df = pd.DataFrame([{
-            "item_code": "N4_0001",
+            "item_code": "",  # 공란 허용 (자동 채번)
             "item_name": "예시 자재명 (특수문자: Ø, ½, ±)",
             "item_detail_no": "ABC-123",
             "model_spec": "SPEC-01",
@@ -485,10 +503,15 @@ elif menu == "🏷️ 품목 관리":
                     stock_count = 0
 
                     for _, r in df_up.iterrows():
-                        i_code = safe_str_clean(r.get("item_code"))
                         i_name = safe_str_clean(r.get("item_name"))
-                        if not i_code or not i_name:
+                        
+                        # 품명이 없으면 패스
+                        if not i_name:
                             continue
+
+                        # 품목코드 공란 시 자동 채번
+                        raw_code = safe_str_clean(r.get("item_code"))
+                        i_code = raw_code if raw_code else generate_next_item_code()
 
                         u_price = safe_float(r.get("unit_price"), 0.0)
                         init_qty = safe_int_clean(r.get("initial_quantity"), 0)
@@ -536,7 +559,7 @@ elif menu == "🏷️ 품목 관리":
                         st.success(f"🎉 총 {success_count}개 품목 등록 완료! (재고 Lot 생성: {stock_count}건)")
                         st.rerun()
                     else:
-                        st.warning("⚠️ 엑셀 내 유효한 품목코드/품명 데이터가 없거나 수량이 부족하여 등록되지 않았습니다. 양식을 확인해주세요.")
+                        st.warning("⚠️ 엑셀 내 유효한 품명 데이터가 없어 등록되지 않았습니다. 양식을 확인해주세요.")
 
                 except Exception as e:
                     st.error(f"엑셀 업로드 처리 중 오류 발생: {e}")
