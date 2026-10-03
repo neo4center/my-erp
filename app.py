@@ -61,7 +61,6 @@ def generate_next_item_code():
         max_num = 0
         for i in items:
             code = str(i.get("item_code", ""))
-            # 숫자만 추출 (예: 'ITEM_01098' -> 1098)
             nums = re.findall(r'\d+', code)
             if nums:
                 num_val = int(nums[-1])
@@ -288,7 +287,7 @@ MENU_STOCK = "📊 재고 현황판"
 MENU_TRANS = "📝 입출고 등록"
 MENU_ITEMS = "🏷️ 품목 관리"
 MENU_HISTORY = "🔍 입출고 내역 조회"
-MENU_RATES = "⚙️️ 환율 설정"
+MENU_RATES = "⚙️ 환율 설정"
 
 menu_list = [MENU_STOCK, MENU_TRANS, MENU_ITEMS, MENU_HISTORY, MENU_RATES]
 if user.get("is_admin") == 1:
@@ -628,10 +627,12 @@ elif menu == MENU_ITEMS:
 
     with tab1:
         st.markdown("#### ✍️ 신규 품목 및 초기 재고 개별 등록")
+        st.markdown("<p style='color: gray; font-size: 13px;'>* 표시는 필수 입력 항목입니다.</p>", unsafe_allow_html=True)
+        
         with st.form("new_item_form", clear_on_submit=True):
             col1, col2, col3 = st.columns(3)
             item_code = col1.text_input("품목코드 (공란 시 자동 채번)", value="")
-            item_name = col2.text_input("품명 (*필수)")
+            item_name = col2.text_input("품명 * (*필수)")
             item_detail_no = col3.text_input("아이템상세번호")
 
             col4, col5, col6 = st.columns(3)
@@ -652,29 +653,27 @@ elif menu == MENU_ITEMS:
             col13, col14, col15, col16 = st.columns(4)
             in_date = col13.text_input("입고일", value=str(datetime.date.today()))
             currency = col14.selectbox("화폐", ["KRW", "USD", "EUR", "JPY"])
-            unit_price = col15.number_input("기초 단가", min_value=0.0, value=0.0)
-            initial_qty = col16.number_input("초기 수량", min_value=0, value=0, step=1)
+            unit_price = col15.number_input("기초 단가 *", min_value=0.0, value=0.0)
+            initial_qty = col16.number_input("초기 수량 *", min_value=0, value=0, step=1, format="%d")
 
             remark = st.text_input("비고")
             img_file = st.file_uploader("품목 사진 첨부 (자동 썸네일 압축 업로드)", type=["png", "jpg", "jpeg"])
 
             if st.form_submit_button("신규 품목 및 초기 수량 저장"):
                 if not item_name.strip():
-                    st.error("품명은 필수 입력 항목입니다.")
+                    st.error("❌ 품명은 필수 입력 항목입니다. 품명을 입력해 주세요.")
                 else:
-                    with st.spinner("⏳ 이미지 압축 및 데이터 저장 중..."):
+                    with st.spinner("⏳ 데이터 저장 중..."):
                         code_input = str(item_code).strip() if item_code else ""
                         
-                        # 1. 사용자가 품목코드를 직접 입력한 경우
+                        # 1. 품목코드 직접 입력 시 중복 검사 및 자동 채번 분기
                         if code_input and code_input.lower() not in ["nan", "null", "none", "", "-"]:
                             final_code = code_input
-                            # 중복 검사: 이미 존재하는 품목코드인지 확인
                             check_dup = db.supabase.table("items").select("item_code").eq("item_code", final_code).execute()
                             if check_dup.data:
                                 st.error(f"❌ 이미 존재하는 품목코드 [{final_code}]입니다. 다른 코드를 사용하시거나 공란으로 두어 자동 채번을 이용하세요.")
                                 st.stop()
                         else:
-                            # 2. 공란인 경우 안전한 자동 채번 실행
                             final_code = generate_next_item_code()
 
                         photo_url = db.upload_item_image(img_file, final_code) if img_file else None
@@ -694,42 +693,53 @@ elif menu == MENU_ITEMS:
                             "useful_life": safe_str_clean(useful_life),
                             "in_date": clean_date(in_date),
                             "currency": currency,
-                            "unit_price": unit_price,
+                            "unit_price": float(unit_price),
                             "remark": safe_str_clean(remark)
                         }
                         if photo_url: 
                             item_data["photo_url"] = photo_url
                         
-                        # 안전한 insert 실행 (기존 데이터 덮어쓰기 방지)
-                        db.supabase.table("items").insert(item_data).execute()
+                        try:
+                            db.supabase.table("items").insert(item_data).execute()
 
-                        if initial_qty > 0:
-                            db.register_inbound_lot(
-                                item_code=final_code,
-                                item_name=safe_str_clean(item_name),
-                                category=safe_str_clean(category_type, "일반"),
-                                inbound_date=clean_date(in_date),
-                                unit_price=unit_price,
-                                quantity=initial_qty
-                            )
+                            if initial_qty > 0:
+                                db.register_inbound_lot(
+                                    item_code=final_code,
+                                    item_name=safe_str_clean(item_name),
+                                    category=safe_str_clean(category_type, "일반"),
+                                    inbound_date=clean_date(in_date),
+                                    unit_price=float(unit_price),
+                                    quantity=int(initial_qty)
+                                )
 
-                        st.success(f"🎉 신규 품목 [{final_code}] 및 기초 재고 등록 완료!")
-                        st.rerun()
+                            st.success(f"🎉 신규 품목 [{final_code}] 및 기초 재고 등록 완료!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"데이터베이스 등록 중 오류가 발생했습니다: {e}")
 
     with tab2:
-        st.markdown("#### ✏️ 기존 품목 정보 수정 (구분, 대/소분류, 선반번호, 재고 수량 포함)")
-        edit_search = st.text_input("🔍 수정할 품목 검색 (품명, 코드, 규격, 상세번호 등)", "", key="edit_search_box")
+        st.markdown("#### ✏️ 기존 품목 정보 수정 (1,000개 초과 대용량 검색 최적화)")
+        st.caption("💡 품목이 1,000개가 넘어가도 검색어를 입력하시면 전체 데이터에서 즉시 찾아 수정할 수 있습니다.")
+        
+        edit_search = st.text_input("🔍 수정할 품목 검색 (품명, 코드, 규격, 상세번호 등 입력 후 엔터)", "", key="edit_search_box")
         
         try:
-            filtered_edit_items = db.supabase.table("items").select("*").limit(5000).execute().data or []
+            # 검색어가 있으면 필터링, 없으면 상위 100개만 먼저 로드하여 속도 최적화 및 1,000건 제한 우회
+            query = db.supabase.table("items").select("*")
+            if edit_search.strip():
+                kw = edit_search.strip()
+                query = query.or_(f"item_code.ilike.%{kw}%,item_name.ilike.%{kw}%,model_spec.ilike.%{kw}%,item_detail_no.ilike.%{kw}%,remark.ilike.%{kw}%")
+            else:
+                query = query.limit(100)
+                
+            filtered_edit_items = query.execute().data or []
         except Exception:
             filtered_edit_items = []
 
-        if edit_search and filtered_edit_items:
-            kw = edit_search.lower()
-            filtered_edit_items = [i for i in filtered_edit_items if kw in str(i.get("item_code","")).lower() or kw in str(i.get("item_name","")).lower() or kw in str(i.get("model_spec","")).lower() or kw in str(i.get("item_detail_no","")).lower() or kw in str(i.get("remark","")).lower()]
-
         if filtered_edit_items:
+            if not edit_search.strip():
+                st.info("💡 데이터가 많아 기본적으로 상위 100개 품목을 표시합니다. 찾으시는 품목이 없다면 위 검색창에 품명이나 코드를 입력해 주세요.")
+
             edit_opts = {f"[{i['item_code']}] {i['item_name']} (규격: {i.get('model_spec','-')})": i for i in filtered_edit_items}
             sel_edit = st.selectbox("수정할 품목 선택:", list(edit_opts.keys()))
             t = edit_opts[sel_edit]
@@ -740,7 +750,7 @@ elif menu == MENU_ITEMS:
 
             with st.form("edit_item_form"):
                 col1, col2, col3 = st.columns(3)
-                e_name = col1.text_input("품명", value=safe_str_clean(t.get("item_name")))
+                e_name = col1.text_input("품명 *", value=safe_str_clean(t.get("item_name")))
                 e_detail = col2.text_input("아이템상세번호", value=safe_str_clean(t.get("item_detail_no")))
                 e_spec = col3.text_input("규격", value=safe_str_clean(t.get("model_spec")))
 
@@ -758,41 +768,44 @@ elif menu == MENU_ITEMS:
                 e_curr = col9.selectbox("화폐", curr_list, index=curr_idx)
 
                 col10, col11 = st.columns(2)
-                e_qty = col10.number_input("총 재고 수량 (수정 시 기초 Lot 수량 재조정)", min_value=0, value=current_total_qty, step=1)
+                e_qty = col10.number_input("총 재고 수량 (수정 시 기초 Lot 수량 재조정)", min_value=0, value=current_total_qty, step=1, format="%d")
                 e_remark = col11.text_input("비고", value=safe_str_clean(t.get("remark")))
 
                 if st.form_submit_button("품목 정보 및 재고 수정 완료"):
-                    with st.spinner("⏳ 품목 정보 수정 중..."):
-                        db.supabase.table("items").update({
-                            "item_name": safe_str_clean(e_name),
-                            "item_detail_no": safe_str_clean(e_detail),
-                            "model_spec": safe_str_clean(e_spec),
-                            "category_type": safe_str_clean(e_type),
-                            "category_main": safe_str_clean(e_main),
-                            "category_sub": safe_str_clean(e_sub),
-                            "shelf_no": safe_str_clean(e_shelf),
-                            "unit_price": e_price,
-                            "currency": e_curr,
-                            "remark": safe_str_clean(e_remark)
-                        }).eq("item_code", target_icode).execute()
+                    if not e_name.strip():
+                        st.error("❌ 품명은 필수 입력 항목입니다.")
+                    else:
+                        with st.spinner("⏳ 품목 정보 수정 중..."):
+                            db.supabase.table("items").update({
+                                "item_name": safe_str_clean(e_name),
+                                "item_detail_no": safe_str_clean(e_detail),
+                                "model_spec": safe_str_clean(e_spec),
+                                "category_type": safe_str_clean(e_type),
+                                "category_main": safe_str_clean(e_main),
+                                "category_sub": safe_str_clean(e_sub),
+                                "shelf_no": safe_str_clean(e_shelf),
+                                "unit_price": float(e_price),
+                                "currency": e_curr,
+                                "remark": safe_str_clean(e_remark)
+                            }).eq("item_code", target_icode).execute()
 
-                        db.supabase.table("stock_lots").delete().eq("item_code", target_icode).execute()
-                        db.supabase.table("stock_transactions").delete().eq("item_code", target_icode).execute()
-                        
-                        if e_qty > 0:
-                            db.register_inbound_lot(
-                                item_code=target_icode,
-                                item_name=safe_str_clean(e_name),
-                                category=safe_str_clean(e_type, "일반"),
-                                inbound_date=str(t.get("in_date", datetime.date.today())),
-                                unit_price=e_price,
-                                quantity=e_qty
-                            )
+                            db.supabase.table("stock_lots").delete().eq("item_code", target_icode).execute()
+                            db.supabase.table("stock_transactions").delete().eq("item_code", target_icode).execute()
+                            
+                            if e_qty > 0:
+                                db.register_inbound_lot(
+                                    item_code=target_icode,
+                                    item_name=safe_str_clean(e_name),
+                                    category=safe_str_clean(e_type, "일반"),
+                                    inbound_date=str(t.get("in_date", datetime.date.today())),
+                                    unit_price=float(e_price),
+                                    quantity=int(e_qty)
+                                )
 
-                        st.success("✅ 품목 정보 및 재고 수량이 성공적으로 수정되었습니다!")
-                        st.rerun()
+                            st.success("✅ 품목 정보 및 재고 수량이 성공적으로 수정되었습니다!")
+                            st.rerun()
         else:
-            st.info("검색어를 입력하시면 수정할 품목 리스트가 표시됩니다.")
+            st.info("검색 조건에 일치하는 품목이 없습니다. 정확한 검색어를 입력해 주세요.")
 
     with tab3:
         st.markdown("#### 📂 기초 데이터 엑셀 일괄 등록 (대량 묶음 전송 Bulk Upsert 최적화)")
@@ -1136,7 +1149,7 @@ elif menu == "👥 사용자 관리 (관리자)":
         })
         st.dataframe(df_users_display, use_container_width=True)
     
-    tab_user1, tab_user2, tab_user3 = st.tabs(["➕ 신규 사용자 추가", "✏️️ 계정 정보 수정", "🗑 계정 삭제"])
+    tab_user1, tab_user2, tab_user3 = st.tabs(["➕ 신규 사용자 추가", "✏️ 계정 정보 수정", "🗑 계정 삭제"])
 
     with tab_user1:
         with st.form("add_user_form", clear_on_submit=True):
