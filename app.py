@@ -293,11 +293,11 @@ if user.get("is_admin") == 1:
 menu = st.sidebar.radio("메뉴 이동:", menu_list)
 
 # ---------------------------------------------------------
-# 메뉴 1: 재고 현황판 (1페이지당 100건 페이징 고정 및 확장 검색 적용)
+# 메뉴 1: 재고 현황판 (검색 시 전체 대상 조회, 미검색 시 1페이지당 100건 페이징)
 # ---------------------------------------------------------
 if menu == MENU_STOCK:
     st.subheader("📊 현재 품목별/Lot별 재고 현황판 (초기재고 0개 포함)")
-    st.caption("💡 1페이지당 100건씩 고정 노출되며, 검색 및 필터링을 통해 정밀 조회가 가능합니다.")
+    st.caption("💡 검색어 또는 상세 필터를 입력하시면 전체 데이터에서 즉시 찾아줍니다. 평소에는 1페이지당 100건씩 노출됩니다.")
 
     # 1. 타이핑 검색 (품목코드, 품명, 아이템상세번호, 규격_모델, 비고)
     search_kw = st.text_input("🔍 통합 검색 (품목코드, 품명, 상세번호, 규격/모델, 비고 통합 검색)", "")
@@ -313,7 +313,7 @@ if menu == MENU_STOCK:
     makers_opt = sorted(list(set(str(m.get("maker", "")) for m in all_meta_resp if m.get("maker") and m.get("maker") != "-")))
     categories_opt = sorted(list(set(str(m.get("category_main", "")) for m in all_meta_resp if m.get("category_main") and m.get("category_main") != "-")))
 
-    with st.expander("🛠️ 엑셀 스타일 상세 필터 열기/닫기", expanded=False):
+    with st.expander("🛠️️ 엑셀 스타일 상세 필터 열기/닫기", expanded=False):
         fc1, fc2, fc3 = st.columns(3)
         sel_in_date = fc1.selectbox("입고일 필터", ["전체"] + dates_opt)
         sel_stock_range = fc2.selectbox("재고 수량 필터", ["전체", "0 (재고없음)", "1~10개", "11개 이상"])
@@ -324,28 +324,47 @@ if menu == MENU_STOCK:
         sel_cat_main = fc5.selectbox("대분류 필터", ["전체"] + categories_opt)
 
     try:
-        # 전체 개수 확인용 쿼리
         count_query = db.supabase.table("items").select("item_code", count="exact")
         count_resp = count_query.execute()
         total_count = count_resp.count if hasattr(count_resp, "count") and count_resp.count is not None else 1097
     except Exception:
         total_count = 1097
 
-    PAGE_SIZE_STOCK = 100
-    total_stock_pages = max(1, math.ceil(total_count / PAGE_SIZE_STOCK))
+    # 검색어나 상세 필터가 걸려있는지 확인
+    is_filtering = (
+        bool(search_kw.strip()) or 
+        sel_in_date != "전체" or 
+        sel_stock_range != "전체" or 
+        sel_device != "전체" or 
+        sel_maker != "전체" or 
+        sel_cat_main != "전체"
+    )
 
-    col_p1, col_p2 = st.columns([1, 4])
-    with col_p1:
-        current_stock_page = st.selectbox("📄 페이지 선택 (100건씩)", list(range(1, total_stock_pages + 1)), format_func=lambda x: f"{x} 페이지 (총 {total_stock_pages}페이지)")
+    if is_filtering:
+        # 검색/필터가 있을 때는 전체 품목을 가져와서 조건에 맞는 것을 모두 탐색
+        try:
+            all_items = db.supabase.table("items").select("*").limit(2000).execute().data or []
+        except Exception:
+            all_items = []
+        current_stock_page = 1
+        total_stock_pages = 1
+    else:
+        # 검색/필터가 없을 때만 1페이지당 100건씩 페이징 적용
+        PAGE_SIZE_STOCK = 100
+        total_stock_pages = max(1, math.ceil(total_count / PAGE_SIZE_STOCK))
 
-    start_idx = (current_stock_page - 1) * PAGE_SIZE_STOCK
-    end_idx = start_idx + PAGE_SIZE_STOCK - 1
+        col_p1, col_p2 = st.columns([1, 4])
+        with col_p1:
+            current_stock_page = st.selectbox("📄 페이지 선택 (100건씩)", list(range(1, total_stock_pages + 1)), format_func=lambda x: f"{x} 페이지 (총 {total_stock_pages}페이지)")
 
-    try:
-        items_resp = db.supabase.table("items").select("*").range(start_idx, end_idx).execute()
-        all_items = items_resp.data or []
-    except Exception:
-        all_items = []
+        start_idx = (current_stock_page - 1) * PAGE_SIZE_STOCK
+        end_idx = start_idx + PAGE_SIZE_STOCK - 1
+
+        try:
+            items_resp = db.supabase.table("items").select("*").range(start_idx, end_idx).execute()
+            all_items = items_resp.data or []
+        except Exception:
+            all_items = []
 
     lots_data = db.get_stock_by_lots() or []
     
@@ -501,9 +520,9 @@ if menu == MENU_STOCK:
 
         out_excel = io.BytesIO()
         with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
-            df_stock.drop(columns=["사진", "대분류"], errors="ignore").to_excel(writer, index=False, sheet_name="재고현황_페이지부")
+            df_stock.drop(columns=["사진", "대분류"], errors="ignore").to_excel(writer, index=False, sheet_name="재고현황_검색결과")
         col3.write("")
-        col3.download_button("📥 현재 페이지 엑셀 다운로드 (.xlsx)", out_excel.getvalue(), file_name=f"ERP_재고현황_p{current_stock_page}_{datetime.date.today()}.xlsx")
+        col3.download_button("📥 현재 보기 엑셀 다운로드 (.xlsx)", out_excel.getvalue(), file_name=f"ERP_재고현황_{datetime.date.today()}.xlsx")
 
         selection_event = st.dataframe(
             df_stock.drop(columns=["대분류"], errors="ignore"),
@@ -699,7 +718,7 @@ elif menu == MENU_ITEMS:
 
         if edit_search and filtered_edit_items:
             kw = edit_search.lower()
-            filtered_edit_items = [i for i in filtered_edit_items if kw in str(i.get("item_code","")).lower() or kw in str(i.get("item_name","")).lower() or kw in str(i.get("model_spec","")).lower()]
+            filtered_edit_items = [i for i in filtered_edit_items if kw in str(i.get("item_code","")).lower() or kw in str(i.get("item_name","")).lower() or kw in str(i.get("model_spec","")).lower() or kw in str(i.get("item_detail_no","")).lower() or kw in str(i.get("remark","")).lower()]
 
         if filtered_edit_items:
             edit_opts = {f"[{i['item_code']}] {i['item_name']} (규격: {i.get('model_spec','-')})": i for i in filtered_edit_items}
@@ -1167,7 +1186,7 @@ elif menu == "👥 사용자 관리 (관리자)":
             sel_del_label = st.selectbox("삭제할 사용자 계정 선택:", list(del_opts.keys()))
             target_del_emp = del_opts[sel_del_label]
 
-            st.warning(f"⚠️️ 선택한 계정 (`{target_del_emp}`)을 삭제하시겠습니까? 삭제된 계정은 복구할 수 없습니다.")
+            st.warning(f"⚠️ 선택한 계정 (`{target_del_emp}`)을 삭제하시겠습니까? 삭제된 계정은 복구할 수 없습니다.")
             if st.button("❌ 선택 계정 즉시 삭제"):
                 if target_del_emp == user["emp_no"]:
                     st.error("현재 로그인되어 있는 본인 계정은 삭제할 수 없습니다.")
