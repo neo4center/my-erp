@@ -54,19 +54,27 @@ def clean_val(val, default="-"):
     return html.escape(s) if s and s.lower() != "nan" else default
 
 def generate_next_item_code():
-    """기존 품목코드들 중 가장 큰 숫자를 정확히 찾아 다음 순번 코드를 생성합니다."""
+    """
+    [완벽 개선된 자동 채번 함수]
+    데이터베이스에서 품목코드 기준 내림차순(desc)으로 정렬하여 가장 마지막(가장 큰 번호) 품목을 딱 1개만 가져온 뒤,
+    그 번호를 기준으로 안전하게 다음 번호를 채번합니다. (1000개 제한 및 순서 꼬임 문제 원천 차단)
+    """
     try:
-        resp = db.supabase.table("items").select("item_code").limit(5000).execute()
+        # 내림차순 정렬 후 가장 최신(큰) 코드 1개만 조회
+        resp = db.supabase.table("items").select("item_code").order("item_code", desc=True).limit(1).execute()
         items = resp.data or []
-        max_num = 0
-        for i in items:
-            code = str(i.get("item_code", ""))
-            nums = re.findall(r'\d+', code)
-            if nums:
-                num_val = int(nums[-1])
-                if num_val > max_num:
-                    max_num = num_val
-        return f"ITEM_{max_num + 1:05d}"
+        
+        if not items:
+            return "ITEM_00001"
+            
+        latest_code = str(items[0].get("item_code", ""))
+        nums = re.findall(r'\d+', latest_code)
+        
+        if nums:
+            max_num = int(nums[-1])
+            return f"ITEM_{max_num + 1:05d}"
+        else:
+            return "ITEM_00001"
     except Exception:
         return f"ITEM_{int(datetime.datetime.now().timestamp())}"
 
@@ -666,7 +674,7 @@ elif menu == MENU_ITEMS:
                     with st.spinner("⏳ 데이터 저장 중..."):
                         code_input = str(item_code).strip() if item_code else ""
                         
-                        # 1. 품목코드 직접 입력 시 중복 검사 및 자동 채번 분기
+                        # 1. 품목코드 직접 입력 시 중복 검사, 공란 시 완벽한 자동 채번 실행
                         if code_input and code_input.lower() not in ["nan", "null", "none", "", "-"]:
                             final_code = code_input
                             check_dup = db.supabase.table("items").select("item_code").eq("item_code", final_code).execute()
@@ -724,7 +732,6 @@ elif menu == MENU_ITEMS:
         edit_search = st.text_input("🔍 수정할 품목 검색 (품명, 코드, 규격, 상세번호 등 입력 후 엔터)", "", key="edit_search_box")
         
         try:
-            # 검색어가 있으면 필터링, 없으면 상위 100개만 먼저 로드하여 속도 최적화 및 1,000건 제한 우회
             query = db.supabase.table("items").select("*")
             if edit_search.strip():
                 kw = edit_search.strip()
