@@ -55,7 +55,7 @@ def clean_val(val, default="-"):
 
 def generate_next_item_code():
     try:
-        resp = db.supabase.table("items").select("item_code").execute()
+        resp = db.supabase.table("items").select("item_code").limit(5000).execute()
         items = resp.data or []
         max_num = 0
         for i in items:
@@ -293,27 +293,25 @@ if user.get("is_admin") == 1:
 menu = st.sidebar.radio("메뉴 이동:", menu_list)
 
 # ---------------------------------------------------------
-# 메뉴 1: 재고 현황판 (검색 시 전체 대상 조회, 미검색 시 1페이지당 100건 페이징)
+# 메뉴 1: 재고 현황판
 # ---------------------------------------------------------
 if menu == MENU_STOCK:
     st.subheader("📊 현재 품목별/Lot별 재고 현황판 (초기재고 0개 포함)")
     st.caption("💡 검색어 또는 상세 필터를 입력하시면 전체 데이터에서 즉시 찾아줍니다. 평소에는 1페이지당 100건씩 노출됩니다.")
 
-    # 1. 타이핑 검색 (품목코드, 품명, 아이템상세번호, 규격_모델, 비고)
     search_kw = st.text_input("🔍 통합 검색 (품목코드, 품명, 상세번호, 규격/모델, 비고 통합 검색)", "")
 
-    # 2. 엑셀 필터 스타일 상세 조건
     try:
-        all_meta_resp = db.supabase.table("items").select("in_date, device_name, maker, category_main").execute().data or []
+        all_meta_resp = db.supabase.table("items").select("in_date, device_name, maker, category_main").limit(5000).execute().data or []
     except Exception:
         all_meta_resp = []
 
     dates_opt = sorted(list(set(str(m.get("in_date", "")) for m in all_meta_resp if m.get("in_date"))))
-    devices_opt = sorted(list(set(str(m.get("device_name", "")) for m in all_meta_resp if m.get("device_name") and m.get("device_name") != "-")))
+    devices_opt = sorted(list(set(str(m.get("device_name", "")) for m in all_meta_resp if m.get("device_name") and m.get("device_name"] != "-")))
     makers_opt = sorted(list(set(str(m.get("maker", "")) for m in all_meta_resp if m.get("maker") and m.get("maker") != "-")))
     categories_opt = sorted(list(set(str(m.get("category_main", "")) for m in all_meta_resp if m.get("category_main") and m.get("category_main") != "-")))
 
-    with st.expander("🛠️️ 엑셀 스타일 상세 필터 열기/닫기", expanded=False):
+    with st.expander("🛠️ 엑셀 스타일 상세 필터 열기/닫기", expanded=False):
         fc1, fc2, fc3 = st.columns(3)
         sel_in_date = fc1.selectbox("입고일 필터", ["전체"] + dates_opt)
         sel_stock_range = fc2.selectbox("재고 수량 필터", ["전체", "0 (재고없음)", "1~10개", "11개 이상"])
@@ -330,7 +328,6 @@ if menu == MENU_STOCK:
     except Exception:
         total_count = 1097
 
-    # 검색어나 상세 필터가 걸려있는지 확인
     is_filtering = (
         bool(search_kw.strip()) or 
         sel_in_date != "전체" or 
@@ -341,15 +338,13 @@ if menu == MENU_STOCK:
     )
 
     if is_filtering:
-        # 검색/필터가 있을 때는 전체 품목을 가져와서 조건에 맞는 것을 모두 탐색
         try:
-            all_items = db.supabase.table("items").select("*").limit(2000).execute().data or []
+            all_items = db.supabase.table("items").select("*").limit(5000).execute().data or []
         except Exception:
             all_items = []
         current_stock_page = 1
         total_stock_pages = 1
     else:
-        # 검색/필터가 없을 때만 1페이지당 100건씩 페이징 적용
         PAGE_SIZE_STOCK = 100
         total_stock_pages = max(1, math.ceil(total_count / PAGE_SIZE_STOCK))
 
@@ -458,7 +453,6 @@ if menu == MENU_STOCK:
     if table_rows:
         df_stock = pd.DataFrame(table_rows)
 
-        # 1. 타이핑 통합 검색 필터 적용
         if search_kw:
             kw = search_kw.lower()
             df_stock = df_stock[
@@ -469,7 +463,6 @@ if menu == MENU_STOCK:
                 df_stock["비고"].str.lower().str.contains(kw, na=False)
             ]
 
-        # 2. 엑셀 스타일 상세 필터 적용
         if sel_in_date != "전체":
             df_stock = df_stock[df_stock["입고일"] == sel_in_date]
         if sel_stock_range == "0 (재고없음)":
@@ -485,10 +478,9 @@ if menu == MENU_STOCK:
         if sel_cat_main != "전체":
             df_stock = df_stock[df_stock["대분류"] == sel_cat_main]
 
-        # 전체 자산 총액 산출
         total_all_asset_amt = 0
         try:
-            all_items_resp = db.supabase.table("items").select("item_code, unit_price, currency, in_date").execute().data or []
+            all_items_resp = db.supabase.table("items").select("item_code, unit_price, currency, in_date").limit(5000).execute().data or []
             all_lots_resp = db.get_stock_by_lots() or []
             all_lot_map = {}
             for l in all_lots_resp:
@@ -563,7 +555,7 @@ elif menu == MENU_TRANS:
 
     search_kw_trans = st.text_input("🔍 대상 품목 통합 검색 (품명, 코드, 상세번호, 규격, 비고 등)", "")
     try:
-        items_list = db.supabase.table("items").select("*").limit(2000).execute().data or []
+        items_list = db.supabase.table("items").select("*").limit(5000).execute().data or []
     except Exception:
         items_list = []
 
@@ -667,7 +659,9 @@ elif menu == MENU_ITEMS:
                     st.error("품명은 필수 입력 항목입니다.")
                 else:
                     with st.spinner("⏳ 이미지 압축 및 데이터 저장 중..."):
-                        final_code = safe_str_clean(item_code) or generate_next_item_code()
+                        code_input = str(item_code).strip() if item_code else ""
+                        final_code = code_input if code_input and code_input.lower() not in ["nan", "null", "none", "", "-"] else generate_next_item_code()
+                        
                         photo_url = db.upload_item_image(img_file, final_code) if img_file else None
                         
                         item_data = {
@@ -712,7 +706,7 @@ elif menu == MENU_ITEMS:
         edit_search = st.text_input("🔍 수정할 품목 검색 (품명, 코드, 규격, 상세번호 등)", "", key="edit_search_box")
         
         try:
-            filtered_edit_items = db.supabase.table("items").select("*").limit(2000).execute().data or []
+            filtered_edit_items = db.supabase.table("items").select("*").limit(5000).execute().data or []
         except Exception:
             filtered_edit_items = []
 
@@ -935,7 +929,7 @@ elif menu == MENU_HISTORY:
 
     try:
         h_query = db.supabase.table("stock_transactions").select("*").neq("requester", "초기재고일괄등록").order("trans_date", desc=True)
-        trans_data = h_query.limit(2000).execute().data or []
+        trans_data = h_query.limit(5000).execute().data or []
     except Exception:
         trans_data = []
 
@@ -944,7 +938,7 @@ elif menu == MENU_HISTORY:
         trans_data = [t for t in trans_data if kw in str(t.get("item_code","")).lower() or kw in str(t.get("requester","")).lower() or kw in str(t.get("manager","")).lower() or kw in str(t.get("remark","")).lower()]
 
     if trans_data:
-        items_resp = db.supabase.table("items").select("item_code, item_name, currency").execute()
+        items_resp = db.supabase.table("items").select("item_code, item_name, currency").limit(5000).execute()
         item_info_map = {i["item_code"]: i for i in (items_resp.data or [])}
 
         table_rows = []
@@ -1127,7 +1121,7 @@ elif menu == "👥 사용자 관리 (관리자)":
         })
         st.dataframe(df_users_display, use_container_width=True)
     
-    tab_user1, tab_user2, tab_user3 = st.tabs(["➕ 신규 사용자 추가", "✏️ 계정 정보 수정", "🗑 계정 삭제"])
+    tab_user1, tab_user2, tab_user3 = st.tabs(["➕ 신규 사용자 추가", "✏️️ 계정 정보 수정", "🗑 계정 삭제"])
 
     with tab_user1:
         with st.form("add_user_form", clear_on_submit=True):
