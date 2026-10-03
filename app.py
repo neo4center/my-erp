@@ -307,7 +307,7 @@ if menu == MENU_STOCK:
         all_meta_resp = []
 
     dates_opt = sorted(list(set(str(m.get("in_date", "")) for m in all_meta_resp if m.get("in_date"))))
-    devices_opt = sorted(list(set(str(m.get("device_name", "")) for m in all_meta_resp if m.get("device_name") and m.get("device_name"] != "-")))
+    devices_opt = sorted(list(set(str(m.get("device_name", "")) for m in all_meta_resp if m.get("device_name") and m.get("device_name") != "-")))
     makers_opt = sorted(list(set(str(m.get("maker", "")) for m in all_meta_resp if m.get("maker") and m.get("maker") != "-")))
     categories_opt = sorted(list(set(str(m.get("category_main", "")) for m in all_meta_resp if m.get("category_main") and m.get("category_main") != "-")))
 
@@ -1121,7 +1121,7 @@ elif menu == "👥 사용자 관리 (관리자)":
         })
         st.dataframe(df_users_display, use_container_width=True)
     
-    tab_user1, tab_user2, tab_user3 = st.tabs(["➕ 신규 사용자 추가", "✏️️ 계정 정보 수정", "🗑 계정 삭제"])
+    tab_user1, tab_user2, tab_user3 = st.tabs(["➕ 신규 사용자 추가", "✏️ 계정 정보 수정", "🗑 계정 삭제"])
 
     with tab_user1:
         with st.form("add_user_form", clear_on_submit=True):
@@ -1180,7 +1180,7 @@ elif menu == "👥 사용자 관리 (관리자)":
             sel_del_label = st.selectbox("삭제할 사용자 계정 선택:", list(del_opts.keys()))
             target_del_emp = del_opts[sel_del_label]
 
-            st.warning(f"⚠️ 선택한 계정 (`{target_del_emp}`)을 삭제하시겠습니까? 삭제된 계정은 복구할 수 없습니다.")
+            st.warning(f"⚠ 선택한 계정 (`{target_del_emp}`)을 삭제하시겠습니까? 삭제된 계정은 복구할 수 없습니다.")
             if st.button("❌ 선택 계정 즉시 삭제"):
                 if target_del_emp == user["emp_no"]:
                     st.error("현재 로그인되어 있는 본인 계정은 삭제할 수 없습니다.")
