@@ -54,22 +54,13 @@ def clean_val(val, default="-"):
     return html.escape(s) if s and s.lower() != "nan" else default
 
 def generate_next_item_code():
-    """
-    [완벽 개선된 자동 채번 함수]
-    데이터베이스에서 품목코드 기준 내림차순(desc)으로 정렬하여 가장 마지막(가장 큰 번호) 품목을 딱 1개만 가져온 뒤,
-    그 번호를 기준으로 안전하게 다음 번호를 채번합니다. (1000개 제한 및 순서 꼬임 문제 원천 차단)
-    """
     try:
-        # 내림차순 정렬 후 가장 최신(큰) 코드 1개만 조회
         resp = db.supabase.table("items").select("item_code").order("item_code", desc=True).limit(1).execute()
         items = resp.data or []
-        
         if not items:
             return "ITEM_00001"
-            
         latest_code = str(items[0].get("item_code", ""))
         nums = re.findall(r'\d+', latest_code)
-        
         if nums:
             max_num = int(nums[-1])
             return f"ITEM_{max_num + 1:05d}"
@@ -85,7 +76,6 @@ def get_year_from_date(date_str):
     nums = re.findall(r'\d+', s)
     if not nums:
         return datetime.date.today().year
-    
     candidate = nums[0]
     if len(candidate) == 4:
         return int(candidate)
@@ -112,7 +102,6 @@ def get_exchange_rate_by_year(currency, year):
     rates_map = get_cached_exchange_rates()
     if (year, curr) in rates_map:
         return rates_map[(year, curr)]
-    
     currency_rates = [v for k, v in rates_map.items() if k[1] == curr]
     if currency_rates:
         return currency_rates[0]
@@ -126,7 +115,6 @@ def render_a4_spec_card(item_code):
 
     lots_resp = db.supabase.table("stock_lots").select("current_qty, unit_price, inbound_date").eq("item_code", item_code).gt("current_qty", 0).execute()
     lots = lots_resp.data or []
-    
     current_stock = sum(safe_int_clean(l.get("current_qty"), 0) for l in lots)
     
     curr = safe_str_clean(item.get("currency"), "KRW")
@@ -150,9 +138,7 @@ def render_a4_spec_card(item_code):
             l_date = l.get("inbound_date", base_in_date)
             l_year = get_year_from_date(l_date)
             l_rate = get_exchange_rate_by_year(curr, l_year)
-            
-            l_unit_krw = l_price * l_rate
-            total_val_krw += round(l_unit_krw * l_qty)
+            total_val_krw += round((l_price * l_rate) * l_qty)
     else:
         representative_rate = get_exchange_rate_by_year(curr, representative_year)
         total_val_krw = 0
@@ -173,14 +159,9 @@ def render_a4_spec_card(item_code):
         t_krw_unit = price * t_rate
         
         row_dict = {
-            "일자": t_date,
-            "수량": qty,
-            "단가": price,
-            "원화환산액": round(t_krw_unit),
-            "총금액": round(qty * t_krw_unit),
-            "요청자": t.get("requester", "-"),
-            "담당자": t.get("manager", "-"),
-            "비고": t.get("remark", "-")
+            "일자": t_date, "수량": qty, "단가": price,
+            "원화환산액": round(t_krw_unit), "총금액": round(qty * t_krw_unit),
+            "요청자": t.get("requester", "-"), "담당자": t.get("manager", "-"), "비고": t.get("remark", "-")
         }
         if t_type in ["IN", "입고"]:
             in_rows.append(row_dict)
@@ -189,7 +170,6 @@ def render_a4_spec_card(item_code):
 
     df_in = pd.DataFrame(in_rows)
     df_out = pd.DataFrame(out_rows)
-
     category_full = f"{safe_str_clean(item.get('category_main'))} - {safe_str_clean(item.get('category_sub'))} - 선반:{safe_str_clean(item.get('shelf_no'))}"
 
     st.markdown("""
@@ -263,10 +243,7 @@ if st.session_state.logged_in_user is None:
                     if resp.data:
                         u = resp.data[0]
                         st.session_state.logged_in_user = {
-                            "emp_no": u["emp_no"],
-                            "name": u["name"],
-                            "position": u["position"],
-                            "is_admin": u.get("is_admin", 0)
+                            "emp_no": u["emp_no"], "name": u["name"], "position": u["position"], "is_admin": u.get("is_admin", 0)
                         }
                         st.success(f"환영합니다, {u['name']} {u['position']}님!")
                         st.rerun()
@@ -304,11 +281,11 @@ if user.get("is_admin") == 1:
 menu = st.sidebar.radio("메뉴 이동:", menu_list)
 
 # ---------------------------------------------------------
-# 메뉴 1: 재고 현황판
+# 메뉴 1: 재고 현황판 (서버사이드 통합 검색 최적화)
 # ---------------------------------------------------------
 if menu == MENU_STOCK:
     st.subheader("📊 현재 품목별/Lot별 재고 현황판 (초기재고 0개 포함)")
-    st.caption("💡 검색어 또는 상세 필터를 입력하시면 전체 데이터에서 즉시 찾아줍니다. 평소에는 1페이지당 100건씩 노출됩니다.")
+    st.caption("💡 검색어를 입력하시면 데이터베이스 전체에서 일치하는 품목을 즉시 찾아줍니다.")
 
     search_kw = st.text_input("🔍 통합 검색 (품목코드, 품명, 상세번호, 규격/모델, 비고 통합 검색)", "")
 
@@ -322,7 +299,7 @@ if menu == MENU_STOCK:
     makers_opt = sorted(list(set(str(m.get("maker", "")) for m in all_meta_resp if m.get("maker") and m.get("maker") != "-")))
     categories_opt = sorted(list(set(str(m.get("category_main", "")) for m in all_meta_resp if m.get("category_main") and m.get("category_main") != "-")))
 
-    with st.expander("🛠️ 엑셀 스타일 상세 필터 열기/닫기", expanded=False):
+    with st.expander("🛠️️ 엑셀 스타일 상세 필터 열기/닫기", expanded=False):
         fc1, fc2, fc3 = st.columns(3)
         sel_in_date = fc1.selectbox("입고일 필터", ["전체"] + dates_opt)
         sel_stock_range = fc2.selectbox("재고 수량 필터", ["전체", "0 (재고없음)", "1~10개", "11개 이상"])
@@ -339,41 +316,47 @@ if menu == MENU_STOCK:
     except Exception:
         total_count = 1097
 
-    is_filtering = (
-        bool(search_kw.strip()) or 
-        sel_in_date != "전체" or 
-        sel_stock_range != "전체" or 
-        sel_device != "전체" or 
-        sel_maker != "전체" or 
-        sel_cat_main != "전체"
-    )
+    # [핵심 개선] 서버사이드(Supabase) 검색 쿼리 적용
+    try:
+        query = db.supabase.table("items").select("*")
+        
+        if search_kw.strip():
+            kw = search_kw.strip()
+            # 데이터베이스 전체 대상 ilike 조건 검색
+            query = query.or_(f"item_code.ilike.%{kw}%,item_name.ilike.%{kw}%,item_detail_no.ilike.%{kw}%,model_spec.ilike.%{kw}%,remark.ilike.%{kw}%")
+            all_items = query.limit(5000).execute().data or []
+            current_stock_page = 1
+            total_stock_pages = 1
+        else:
+            is_filtering = (
+                sel_in_date != "전체" or 
+                sel_stock_range != "전체" or 
+                sel_device != "전체" or 
+                sel_maker != "전체" or 
+                sel_cat_main != "전체"
+            )
 
-    if is_filtering:
-        try:
-            all_items = db.supabase.table("items").select("*").limit(5000).execute().data or []
-        except Exception:
-            all_items = []
-        current_stock_page = 1
-        total_stock_pages = 1
-    else:
-        PAGE_SIZE_STOCK = 100
-        total_stock_pages = max(1, math.ceil(total_count / PAGE_SIZE_STOCK))
+            if is_filtering:
+                all_items = query.limit(5000).execute().data or []
+                current_stock_page = 1
+                total_stock_pages = 1
+            else:
+                PAGE_SIZE_STOCK = 100
+                total_stock_pages = max(1, math.ceil(total_count / PAGE_SIZE_STOCK))
 
-        col_p1, col_p2 = st.columns([1, 4])
-        with col_p1:
-            current_stock_page = st.selectbox("📄 페이지 선택 (100건씩)", list(range(1, total_stock_pages + 1)), format_func=lambda x: f"{x} 페이지 (총 {total_stock_pages}페이지)")
+                col_p1, col_p2 = st.columns([1, 4])
+                with col_p1:
+                    current_stock_page = st.selectbox("📄 페이지 선택 (100건씩)", list(range(1, total_stock_pages + 1)), format_func=lambda x: f"{x} 페이지 (총 {total_stock_pages}페이지)")
 
-        start_idx = (current_stock_page - 1) * PAGE_SIZE_STOCK
-        end_idx = start_idx + PAGE_SIZE_STOCK - 1
-
-        try:
-            items_resp = db.supabase.table("items").select("*").range(start_idx, end_idx).execute()
-            all_items = items_resp.data or []
-        except Exception:
-            all_items = []
+                start_idx = (current_stock_page - 1) * PAGE_SIZE_STOCK
+                end_idx = start_idx + PAGE_SIZE_STOCK - 1
+                
+                items_resp = query.range(start_idx, end_idx).execute()
+                all_items = items_resp.data or []
+    except Exception:
+        all_items = []
 
     lots_data = db.get_stock_by_lots() or []
-    
     lot_map = {}
     for lot in lots_data:
         icode = lot.get("item_code")
@@ -464,16 +447,6 @@ if menu == MENU_STOCK:
     if table_rows:
         df_stock = pd.DataFrame(table_rows)
 
-        if search_kw:
-            kw = search_kw.lower()
-            df_stock = df_stock[
-                df_stock["품목코드"].str.lower().str.contains(kw, na=False) |
-                df_stock["품명"].str.lower().str.contains(kw, na=False) |
-                df_stock["상세번호"].str.lower().str.contains(kw, na=False) |
-                df_stock["규격/모델"].str.lower().str.contains(kw, na=False) |
-                df_stock["비고"].str.lower().str.contains(kw, na=False)
-            ]
-
         if sel_in_date != "전체":
             df_stock = df_stock[df_stock["입고일"] == sel_in_date]
         if sel_stock_range == "0 (재고없음)":
@@ -518,7 +491,7 @@ if menu == MENU_STOCK:
             total_all_asset_amt = 0
 
         col1, col2, col3 = st.columns([2, 2, 2])
-        col1.metric("전체 등록 품목 수", f"{total_count} 개 (현재 {current_stock_page}페이지 표시중)")
+        col1.metric("전체 등록 품목 수", f"{total_count} 개")
         col2.metric("총 재고 자산 금액", f"{total_all_asset_amt:,.0f} 원")
 
         out_excel = io.BytesIO()
@@ -674,7 +647,6 @@ elif menu == MENU_ITEMS:
                     with st.spinner("⏳ 데이터 저장 중..."):
                         code_input = str(item_code).strip() if item_code else ""
                         
-                        # 1. 품목코드 직접 입력 시 중복 검사, 공란 시 완벽한 자동 채번 실행
                         if code_input and code_input.lower() not in ["nan", "null", "none", "", "-"]:
                             final_code = code_input
                             check_dup = db.supabase.table("items").select("item_code").eq("item_code", final_code).execute()
@@ -996,17 +968,9 @@ elif menu == MENU_HISTORY:
             type_display = "입고 (IN)" if t_type in ["IN", "입고"] else "출고 (OUT)"
 
             table_rows.append({
-                "일자": t_date,
-                "구분": type_display,
-                "품목코드": icode,
-                "품명": iname,
-                "수량": qty,
-                "단가": price,
-                "원화환산액": unit_krw,
-                "총금액": total_krw,
-                "요청자": t.get("requester", "-"),
-                "담당자": t.get("manager", "-"),
-                "비고": t.get("remark", "-")
+                "일자": t_date, "구분": type_display, "품목코드": icode, "품명": iname,
+                "수량": qty, "단가": price, "원화환산액": unit_krw, "총금액": total_krw,
+                "요청자": t.get("requester", "-"), "담당자": t.get("manager", "-"), "비고": t.get("remark", "-")
             })
 
         df_trans_all = pd.DataFrame(table_rows)
@@ -1148,11 +1112,7 @@ elif menu == "👥 사용자 관리 (관리자)":
     if users_data:
         df_users = pd.DataFrame(users_data)
         df_users_display = df_users.rename(columns={
-            "emp_no": "사번",
-            "name": "이름",
-            "position": "직급",
-            "is_admin": "관리자권한",
-            "created_at": "등록일시"
+            "emp_no": "사번", "name": "이름", "position": "직급", "is_admin": "관리자권한", "created_at": "등록일시"
         })
         st.dataframe(df_users_display, use_container_width=True)
     
