@@ -54,15 +54,19 @@ def clean_val(val, default="-"):
     return html.escape(s) if s and s.lower() != "nan" else default
 
 def generate_next_item_code():
+    """기존 품목코드들 중 가장 큰 숫자를 정확히 찾아 다음 순번 코드를 생성합니다."""
     try:
         resp = db.supabase.table("items").select("item_code").limit(5000).execute()
         items = resp.data or []
         max_num = 0
         for i in items:
-            code = i.get("item_code", "")
+            code = str(i.get("item_code", ""))
+            # 숫자만 추출 (예: 'ITEM_01098' -> 1098)
             nums = re.findall(r'\d+', code)
             if nums:
-                max_num = max(max_num, int(nums[-1]))
+                num_val = int(nums[-1])
+                if num_val > max_num:
+                    max_num = num_val
         return f"ITEM_{max_num + 1:05d}"
     except Exception:
         return f"ITEM_{int(datetime.datetime.now().timestamp())}"
@@ -284,7 +288,7 @@ MENU_STOCK = "📊 재고 현황판"
 MENU_TRANS = "📝 입출고 등록"
 MENU_ITEMS = "🏷️ 품목 관리"
 MENU_HISTORY = "🔍 입출고 내역 조회"
-MENU_RATES = "⚙️ 환율 설정"
+MENU_RATES = "⚙️️ 환율 설정"
 
 menu_list = [MENU_STOCK, MENU_TRANS, MENU_ITEMS, MENU_HISTORY, MENU_RATES]
 if user.get("is_admin") == 1:
@@ -660,8 +664,19 @@ elif menu == MENU_ITEMS:
                 else:
                     with st.spinner("⏳ 이미지 압축 및 데이터 저장 중..."):
                         code_input = str(item_code).strip() if item_code else ""
-                        final_code = code_input if code_input and code_input.lower() not in ["nan", "null", "none", "", "-"] else generate_next_item_code()
                         
+                        # 1. 사용자가 품목코드를 직접 입력한 경우
+                        if code_input and code_input.lower() not in ["nan", "null", "none", "", "-"]:
+                            final_code = code_input
+                            # 중복 검사: 이미 존재하는 품목코드인지 확인
+                            check_dup = db.supabase.table("items").select("item_code").eq("item_code", final_code).execute()
+                            if check_dup.data:
+                                st.error(f"❌ 이미 존재하는 품목코드 [{final_code}]입니다. 다른 코드를 사용하시거나 공란으로 두어 자동 채번을 이용하세요.")
+                                st.stop()
+                        else:
+                            # 2. 공란인 경우 안전한 자동 채번 실행
+                            final_code = generate_next_item_code()
+
                         photo_url = db.upload_item_image(img_file, final_code) if img_file else None
                         
                         item_data = {
@@ -682,13 +697,13 @@ elif menu == MENU_ITEMS:
                             "unit_price": unit_price,
                             "remark": safe_str_clean(remark)
                         }
-                        if photo_url: item_data["photo_url"] = photo_url
+                        if photo_url: 
+                            item_data["photo_url"] = photo_url
                         
-                        db.supabase.table("items").upsert(item_data).execute()
+                        # 안전한 insert 실행 (기존 데이터 덮어쓰기 방지)
+                        db.supabase.table("items").insert(item_data).execute()
 
                         if initial_qty > 0:
-                            db.supabase.table("stock_lots").delete().eq("item_code", final_code).execute()
-                            db.supabase.table("stock_transactions").delete().eq("item_code", final_code).execute()
                             db.register_inbound_lot(
                                 item_code=final_code,
                                 item_name=safe_str_clean(item_name),
@@ -1121,7 +1136,7 @@ elif menu == "👥 사용자 관리 (관리자)":
         })
         st.dataframe(df_users_display, use_container_width=True)
     
-    tab_user1, tab_user2, tab_user3 = st.tabs(["➕ 신규 사용자 추가", "✏️ 계정 정보 수정", "🗑 계정 삭제"])
+    tab_user1, tab_user2, tab_user3 = st.tabs(["➕ 신규 사용자 추가", "✏️️ 계정 정보 수정", "🗑 계정 삭제"])
 
     with tab_user1:
         with st.form("add_user_form", clear_on_submit=True):
@@ -1180,7 +1195,7 @@ elif menu == "👥 사용자 관리 (관리자)":
             sel_del_label = st.selectbox("삭제할 사용자 계정 선택:", list(del_opts.keys()))
             target_del_emp = del_opts[sel_del_label]
 
-            st.warning(f"⚠ 선택한 계정 (`{target_del_emp}`)을 삭제하시겠습니까? 삭제된 계정은 복구할 수 없습니다.")
+            st.warning(f"⚠️ 선택한 계정 (`{target_del_emp}`)을 삭제하시겠습니까? 삭제된 계정은 복구할 수 없습니다.")
             if st.button("❌ 선택 계정 즉시 삭제"):
                 if target_del_emp == user["emp_no"]:
                     st.error("현재 로그인되어 있는 본인 계정은 삭제할 수 없습니다.")
