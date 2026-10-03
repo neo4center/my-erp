@@ -281,7 +281,7 @@ if user.get("is_admin") == 1:
 menu = st.sidebar.radio("메뉴 이동:", menu_list)
 
 # ---------------------------------------------------------
-# 메뉴 1: 재고 현황판 (서버사이드 통합 검색 최적화)
+# 메뉴 1: 재고 현황판
 # ---------------------------------------------------------
 if menu == MENU_STOCK:
     st.subheader("📊 현재 품목별/Lot별 재고 현황판 (초기재고 0개 포함)")
@@ -299,7 +299,7 @@ if menu == MENU_STOCK:
     makers_opt = sorted(list(set(str(m.get("maker", "")) for m in all_meta_resp if m.get("maker") and m.get("maker") != "-")))
     categories_opt = sorted(list(set(str(m.get("category_main", "")) for m in all_meta_resp if m.get("category_main") and m.get("category_main") != "-")))
 
-    with st.expander("🛠️️ 엑셀 스타일 상세 필터 열기/닫기", expanded=False):
+    with st.expander("🛠 엑셀 스타일 상세 필터 열기/닫기", expanded=False):
         fc1, fc2, fc3 = st.columns(3)
         sel_in_date = fc1.selectbox("입고일 필터", ["전체"] + dates_opt)
         sel_stock_range = fc2.selectbox("재고 수량 필터", ["전체", "0 (재고없음)", "1~10개", "11개 이상"])
@@ -316,13 +316,11 @@ if menu == MENU_STOCK:
     except Exception:
         total_count = 1097
 
-    # [핵심 개선] 서버사이드(Supabase) 검색 쿼리 적용
     try:
         query = db.supabase.table("items").select("*")
         
         if search_kw.strip():
             kw = search_kw.strip()
-            # 데이터베이스 전체 대상 ilike 조건 검색
             query = query.or_(f"item_code.ilike.%{kw}%,item_name.ilike.%{kw}%,item_detail_no.ilike.%{kw}%,model_spec.ilike.%{kw}%,remark.ilike.%{kw}%")
             all_items = query.limit(5000).execute().data or []
             current_stock_page = 1
@@ -532,24 +530,28 @@ if menu == MENU_STOCK:
         st.info("조건에 일치하는 품목 데이터가 없습니다.")
 
 # ---------------------------------------------------------
-# 메뉴 2: 입출고 등록
+# 메뉴 2: 입출고 등록 (서버사이드 검색 적용)
 # ---------------------------------------------------------
 elif menu == MENU_TRANS:
     st.subheader("📝 자재 입출고 등록 (FIFO 선입선출)")
 
-    search_kw_trans = st.text_input("🔍 대상 품목 통합 검색 (품명, 코드, 상세번호, 규격, 비고 등)", "")
+    search_kw_trans = st.text_input("🔍 대상 품목 통합 검색 (품명, 코드, 상세번호, 규격, 비고 등)", "", key="trans_search_box")
+    
     try:
-        items_list = db.supabase.table("items").select("*").limit(5000).execute().data or []
+        t_query = db.supabase.table("items").select("*")
+        if search_kw_trans.strip():
+            kw = search_kw_trans.strip()
+            t_query = t_query.or_(f"item_code.ilike.%{kw}%,item_name.ilike.%{kw}%,item_detail_no.ilike.%{kw}%,model_spec.ilike.%{kw}%,remark.ilike.%{kw}%")
+        items_list = t_query.limit(100).execute().data or []
     except Exception:
         items_list = []
 
-    if search_kw_trans and items_list:
-        kw = search_kw_trans.lower()
-        items_list = [i for i in items_list if kw in str(i.get("item_code", "")).lower() or kw in str(i.get("item_name", "")).lower() or kw in str(i.get("item_detail_no", "")).lower() or kw in str(i.get("model_spec", "")).lower() or kw in str(i.get("remark", "")).lower()]
-
     if not items_list:
-        st.warning("조건에 일치하는 품목이 없습니다.")
+        st.warning("조건에 일치하는 품목이 없습니다. 검색어를 다시 확인해 주세요.")
     else:
+        if not search_kw_trans.strip():
+            st.info("💡 데이터가 많아 기본적으로 상위 100개 품목을 표시합니다. 찾으시는 품목(`ITEM_01099` 등)이 없다면 위 검색창에 품명이나 코드를 입력해 주세요.")
+
         item_opts = {f"[{i['item_code']}] {i['item_name']} (상세: {i.get('item_detail_no','-')}, 규격: {i.get('model_spec','-')})": i for i in items_list}
         
         selected_label = st.selectbox("🎯 대상 품목 선택", list(item_opts.keys()), key="trans_select")
@@ -698,8 +700,8 @@ elif menu == MENU_ITEMS:
                             st.error(f"데이터베이스 등록 중 오류가 발생했습니다: {e}")
 
     with tab2:
-        st.markdown("#### ✏️ 기존 품목 정보 수정 (1,000개 초과 대용량 검색 최적화)")
-        st.caption("💡 품목이 1,000개가 넘어가도 검색어를 입력하시면 전체 데이터에서 즉시 찾아 수정할 수 있습니다.")
+        st.markdown("#### ✏️ 기존 품목 정보 수정 (서버사이드 통합 검색 최적화)")
+        st.caption("💡 품목이 1,000개가 넘어가도 검색어를 입력하시면 데이터베이스 전체에서 즉시 찾아 수정할 수 있습니다.")
         
         edit_search = st.text_input("🔍 수정할 품목 검색 (품명, 코드, 규격, 상세번호 등 입력 후 엔터)", "", key="edit_search_box")
         
@@ -708,10 +710,8 @@ elif menu == MENU_ITEMS:
             if edit_search.strip():
                 kw = edit_search.strip()
                 query = query.or_(f"item_code.ilike.%{kw}%,item_name.ilike.%{kw}%,model_spec.ilike.%{kw}%,item_detail_no.ilike.%{kw}%,remark.ilike.%{kw}%")
-            else:
-                query = query.limit(100)
-                
-            filtered_edit_items = query.execute().data or []
+            
+            filtered_edit_items = query.limit(100).execute().data or []
         except Exception:
             filtered_edit_items = []
 
