@@ -35,7 +35,7 @@ def safe_str_clean(val, default="-"):
     if pd.isna(val) or val is None:
         return default
     s = str(val).strip()
-    if s.lower() in ["nan", "null", "none", ""]:
+    if s.lower() in ["nan", "null", "none", "", "none"]:
         return default
     return s.replace('"', '″').replace("'", "′")
 
@@ -51,7 +51,7 @@ def clean_val(val, default="-"):
     if pd.isna(val) or val is None:
         return default
     s = str(val).strip().replace('"', "")
-    return html.escape(s) if s and s.lower() != "nan" else default
+    return html.escape(s) if s and s.lower() not in ["nan", "none", ""] else default
 
 def generate_next_item_code():
     try:
@@ -145,7 +145,6 @@ def render_a4_spec_card(item_code):
 
     unit_krw_display = int(round(representative_price * representative_rate))
 
-    # A4 명세서에는 기초재고 세팅을 포함한 모든 입출고 내역 표시
     trans_resp = db.supabase.table("stock_transactions").select("*").eq("item_code", item_code).order("trans_date", desc=True).limit(50).execute()
     trans_data = trans_resp.data or []
     
@@ -165,9 +164,9 @@ def render_a4_spec_card(item_code):
             "수량": f"{qty:,} 개",
             "원화환산액": f"{round(t_krw_unit):,} 원",
             "총금액": f"{round(qty * t_krw_unit):,} 원",
-            "담당자": t.get("manager", "-"),
-            "요청자": t.get("requester", "-"),
-            "비고": t.get("remark", "-")
+            "담당자": safe_str_clean(t.get("manager"), "-"),
+            "요청자": safe_str_clean(t.get("requester"), "-"),
+            "비고": safe_str_clean(t.get("remark"), "-")
         }
         if t_type in ["IN", "입고"]:
             in_rows.append(row_dict)
@@ -575,7 +574,8 @@ elif menu == MENU_TRANS:
             unit_price = col4.number_input(f"적용 단가 ({target_item.get('currency', 'KRW')})", min_value=0.0, value=safe_float(target_item.get("unit_price")), step=100.0)
 
             col5, col6 = st.columns(2)
-            manager = col5.text_input("담당자 (작성자)", value=f"{user['name']} {user['position']}")
+            current_user_str = f"{user['name']} {user['position']}"
+            manager = col5.text_input("담당자 (작성자)", value=current_user_str)
             requester = col6.text_input("출고/입고 요청자 (*필수)")
 
             remark = st.text_input("비고 (용도, 출처 등)")
@@ -593,14 +593,20 @@ elif menu == MENU_TRANS:
                                 category=target_item.get("category_type", "일반"),
                                 inbound_date=str(trans_date),
                                 unit_price=unit_price,
-                                quantity=quantity
+                                quantity=quantity,
+                                manager=manager,
+                                requester=requester,
+                                remark=remark
                             )
                             st.success(f"✅ [{item_code}] {quantity}개 입고 등록이 완료되었습니다.")
                         else:
                             db.process_fifo_outbound(
                                 item_code=item_code,
                                 outbound_qty=quantity,
-                                trans_date=str(trans_date)
+                                trans_date=str(trans_date),
+                                requester=requester,
+                                manager=manager,
+                                remark=remark
                             )
                         st.rerun()
 
@@ -692,13 +698,17 @@ elif menu == MENU_ITEMS:
                             db.supabase.table("items").insert(item_data).execute()
 
                             if initial_qty > 0:
+                                current_user_str = f"{user['name']} {user['position']}"
                                 db.register_inbound_lot(
                                     item_code=final_code,
                                     item_name=safe_str_clean(item_name),
                                     category=safe_str_clean(category_type, "일반"),
                                     inbound_date=clean_date(in_date),
                                     unit_price=float(unit_price),
-                                    quantity=int(initial_qty)
+                                    quantity=int(initial_qty),
+                                    manager=current_user_str,
+                                    requester=current_user_str,
+                                    remark=safe_str_clean(remark, "개별 직접 등록")
                                 )
 
                             st.success(f"🎉 신규 품목 [{final_code}] 및 기초 재고 등록 완료!")
@@ -779,13 +789,17 @@ elif menu == MENU_ITEMS:
                             db.supabase.table("stock_transactions").delete().eq("item_code", target_icode).execute()
                             
                             if e_qty > 0:
+                                current_user_str = f"{user['name']} {user['position']}"
                                 db.register_inbound_lot(
                                     item_code=target_icode,
                                     item_name=safe_str_clean(e_name),
                                     category=safe_str_clean(e_type, "일반"),
                                     inbound_date=str(t.get("in_date", datetime.date.today())),
                                     unit_price=float(e_price),
-                                    quantity=int(e_qty)
+                                    quantity=int(e_qty),
+                                    manager=current_user_str,
+                                    requester=current_user_str,
+                                    remark=safe_str_clean(e_remark, "품목 수정 재고 재생성")
                                 )
 
                             st.success("✅ 품목 정보 및 재고 수량이 성공적으로 수정되었습니다!")
@@ -840,6 +854,7 @@ elif menu == MENU_ITEMS:
                     lots_payloads = []
                     trans_payloads = []
                     codes_to_reset = []
+                    current_user_str = f"{user['name']} {user['position']}"
 
                     for _, r in df_up.iterrows():
                         i_name = safe_str_clean(r.get("item_name"))
@@ -891,7 +906,7 @@ elif menu == MENU_ITEMS:
                                 "unit_price": u_price,
                                 "trans_date": in_d,
                                 "requester": "초기재고일괄등록",
-                                "manager": f"{user['name']} {user['position']}",
+                                "manager": current_user_str,
                                 "remark": r_remark
                             })
 
@@ -943,7 +958,6 @@ elif menu == MENU_HISTORY:
     hist_search = st.text_input("🔍 운영 입출고 내역 검색 (품목코드, 요청자, 담당자, 비고 등)", "")
 
     try:
-        # [수정] 메인 통합 이력 조회에서는 '초기재고일괄등록' 데이터를 제외하여 순수 운영 내역만 표시
         h_query = db.supabase.table("stock_transactions").select("*").neq("requester", "초기재고일괄등록").order("trans_date", desc=True)
         trans_data = h_query.limit(5000).execute().data or []
     except Exception:
@@ -985,9 +999,9 @@ elif menu == MENU_HISTORY:
                 "수량": f"{qty:,} 개",
                 "원화환산액": f"{unit_krw:,} 원",
                 "총금액": f"{total_krw:,} 원",
-                "담당자": t.get("manager", "-"),
-                "요청자": t.get("requester", "-"),
-                "비고": t.get("remark", "-")
+                "담당자": safe_str_clean(t.get("manager"), "-"),
+                "요청자": safe_str_clean(t.get("requester"), "-"),
+                "비고": safe_str_clean(t.get("remark"), "-")
             })
 
         df_trans_all = pd.DataFrame(table_rows)
@@ -1020,7 +1034,6 @@ elif menu == MENU_HISTORY:
             st.markdown("---")
             st.markdown(f"### 📌 선택 품목 [{sel_item_code}] {sel_item_name} 상세 입출고 분석")
 
-            # [수정] 상세 분석 리스트에서는 기초세팅 내역을 포함하여 해당 품목의 모든 트랜잭션 가져오기
             try:
                 all_item_trans_resp = db.supabase.table("stock_transactions").select("*").eq("item_code", sel_item_code).order("trans_date", desc=True).execute()
                 raw_item_trans = all_item_trans_resp.data or []
@@ -1048,9 +1061,9 @@ elif menu == MENU_HISTORY:
                     "수량": f"{qty_sub:,} 개",
                     "원화환산액": f"{unit_krw_sub:,} 원",
                     "총금액": f"{total_krw_sub:,} 원",
-                    "담당자": t_sub.get("manager", "-"),
-                    "요청자": t_sub.get("requester", "-"),
-                    "비고": t_sub.get("remark", "-")
+                    "담당자": safe_str_clean(t_sub.get("manager"), "-"),
+                    "요청자": safe_str_clean(t_sub.get("requester"), "-"),
+                    "비고": safe_str_clean(t_sub.get("remark"), "-")
                 })
 
             df_item_all = pd.DataFrame(item_table_rows)
@@ -1226,7 +1239,7 @@ elif menu == "👥 사용자 관리 (관리자)":
             sel_del_label = st.selectbox("삭제할 사용자 계정 선택:", list(del_opts.keys()))
             target_del_emp = del_opts[sel_del_label]
 
-            st.warning(f"⚠️ 선택한 계정 (`{target_del_emp}`)을 삭제하시겠습니까? 삭제된 계정은 복구할 수 없습니다.")
+            st.warning(f"⚠️️ 선택한 계정 (`{target_del_emp}`)을 삭제하시겠습니까? 삭제된 계정은 복구할 수 없습니다.")
             if st.button("❌ 선택 계정 즉시 삭제"):
                 if target_del_emp == user["emp_no"]:
                     st.error("현재 로그인되어 있는 본인 계정은 삭제할 수 없습니다.")
