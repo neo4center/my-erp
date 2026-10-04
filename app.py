@@ -145,11 +145,14 @@ def render_a4_spec_card(item_code):
 
     unit_krw_display = int(round(representative_price * representative_rate))
 
-    trans_resp = db.supabase.table("stock_transactions").select("*").eq("item_code", item_code).order("trans_date", desc=True).limit(50).execute()
+    # 오름차순(날짜순) 정렬 보장
+    trans_resp = db.supabase.table("stock_transactions").select("*").eq("item_code", item_code).order("trans_date", desc=False).limit(100).execute()
     trans_data = trans_resp.data or []
     
     in_rows, out_rows = [], []
-    for idx, t in enumerate(trans_data, 1):
+    in_idx, out_idx = 1, 1
+    
+    for t in trans_data:
         t_type = t.get("trans_type", "")
         qty = safe_int_clean(t.get("quantity"), 0)
         price = safe_float(t.get("unit_price"), 0.0)
@@ -158,7 +161,6 @@ def render_a4_spec_card(item_code):
         t_rate = get_exchange_rate_by_year(curr, t_year)
         t_krw_unit = price * t_rate
         
-        # 담당자 이름 정제 (직책 제거 및 이름 추출, 없으면 '최광호' 부여)
         raw_mgr = safe_str_clean(t.get("manager"), "")
         if not raw_mgr or raw_mgr in ["-", "None", ""]:
             raw_mgr = "최광호"
@@ -166,30 +168,38 @@ def render_a4_spec_card(item_code):
             for pos in POSITIONS:
                 raw_mgr = raw_mgr.replace(pos, "").strip()
         
-        # 요청자 정제 (개별등록이거나 시스템명이면 '-')
         raw_req = safe_str_clean(t.get("requester"), "-")
         if raw_req in ["-", "초기재고일괄등록", "시스템입고", "None", ""]:
             raw_req = "-" if t_type in ["IN", "입고"] else "출고담당자"
 
-        # 비고 연동 (거래 내역에 비고가 없으면 품목 마스터의 비고를 폴백으로 사용)
         t_remark = safe_str_clean(t.get("remark"), "")
         if not t_remark or t_remark in ["-", "None", ""]:
             t_remark = safe_str_clean(item.get("remark"), "-")
 
-        row_dict = {
-            "No": idx,
-            "일자": t_date,
-            "수량": f"{qty:,} 개",
-            "원화환산액": f"{round(t_krw_unit):,} 원",
-            "총금액": f"{round(qty * t_krw_unit):,} 원",
-            "담당자": raw_mgr,
-            "요청자": raw_req,
-            "비고": t_remark
-        }
         if t_type in ["IN", "입고"]:
-            in_rows.append(row_dict)
+            in_rows.append({
+                "No": in_idx,
+                "일자": t_date,
+                "수량": f"{qty:,} 개",
+                "원화환산액": f"{round(t_krw_unit):,} 원",
+                "총금액": f"{round(qty * t_krw_unit):,} 원",
+                "담당자": raw_mgr,
+                "요청자": raw_req,
+                "비고": t_remark
+            })
+            in_idx += 1
         elif t_type in ["OUT", "출고"]:
-            out_rows.append(row_dict)
+            out_rows.append({
+                "No": out_idx,
+                "일자": t_date,
+                "수량": f"{qty:,} 개",
+                "원화환산액": f"{round(t_krw_unit):,} 원",
+                "총금액": f"{round(qty * t_krw_unit):,} 원",
+                "담당자": raw_mgr,
+                "요청자": raw_req,
+                "비고": t_remark
+            })
+            out_idx += 1
 
     df_in = pd.DataFrame(in_rows)
     df_out = pd.DataFrame(out_rows)
@@ -202,7 +212,6 @@ def render_a4_spec_card(item_code):
     .info-table { width: 100%; border-collapse: collapse; margin-bottom: 15px; }
     .info-table th, .info-table td { border: 1px solid #ccc; padding: 8px 12px; font-size: 14px; }
     .info-table th { background-color: #f4f4f4; font-weight: bold; width: 18%; text-align: center; }
-    table.dataframe th, table.dataframe td { text-align: center !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -233,15 +242,15 @@ def render_a4_spec_card(item_code):
             st.markdown(html_table, unsafe_allow_html=True)
 
         st.markdown("---")
-        st.markdown("### 📥 1. 입고 내역 (기초 세팅 포함)")
+        st.markdown("### 📥 1. 입고 내역 (오름차순 정렬)")
         if not df_in.empty:
-            st.markdown(df_in.to_html(index=False, classes="dataframe", justify="center"), unsafe_allow_html=True)
+            st.dataframe(df_in, use_container_width=True, hide_index=True)
         else:
             st.caption("※ 입고 내역이 없습니다.")
 
-        st.markdown("### 📤 2. 출고 내역")
+        st.markdown("### 📤 2. 출고 내역 (오름차순 정렬)")
         if not df_out.empty:
-            st.markdown(df_out.to_html(index=False, classes="dataframe", justify="center"), unsafe_allow_html=True)
+            st.dataframe(df_out, use_container_width=True, hide_index=True)
         else:
             st.caption("※ 출고 내역이 없습니다.")
 
@@ -347,8 +356,6 @@ if menu == MENU_STOCK:
             kw = search_kw.strip()
             query = query.or_(f"item_code.ilike.%{kw}%,item_name.ilike.%{kw}%,item_detail_no.ilike.%{kw}%,model_spec.ilike.%{kw}%,remark.ilike.%{kw}%")
             all_items = query.limit(5000).execute().data or []
-            current_stock_page = 1
-            total_stock_pages = 1
         else:
             is_filtering = (
                 sel_in_date != "전체" or 
@@ -360,13 +367,11 @@ if menu == MENU_STOCK:
 
             if is_filtering:
                 all_items = query.limit(5000).execute().data or []
-                current_stock_page = 1
-                total_stock_pages = 1
             else:
                 PAGE_SIZE_STOCK = 100
                 total_stock_pages = max(1, math.ceil(total_count / PAGE_SIZE_STOCK))
 
-                col_p1, col_p2 = st.columns([1, 4])
+                col_p1, _ = st.columns([1, 4])
                 with col_p1:
                     current_stock_page = st.selectbox("📄 페이지 선택 (100건씩)", list(range(1, total_stock_pages + 1)), format_func=lambda x: f"{x} 페이지 (총 {total_stock_pages}페이지)")
 
@@ -554,83 +559,155 @@ if menu == MENU_STOCK:
         st.info("조건에 일치하는 품목 데이터가 없습니다.")
 
 # ---------------------------------------------------------
-# 메뉴 2: 입출고 등록
+# 메뉴 2: 입출고 등록 (신규 등록 + 수정/삭제 탭 추가)
 # ---------------------------------------------------------
 elif menu == MENU_TRANS:
-    st.subheader("📝 자재 입출고 등록 (FIFO 선입선출)")
+    st.subheader("📝 자재 입출고 등록 및 이력 관리 (FIFO 선입선출)")
 
-    search_kw_trans = st.text_input("🔍 대상 품목 통합 검색 (품명, 코드, 상세번호, 규격, 비고 등)", "", key="trans_search_box")
-    
-    try:
-        t_query = db.supabase.table("items").select("*")
-        if search_kw_trans.strip():
-            kw = search_kw_trans.strip()
-            t_query = t_query.or_(f"item_code.ilike.%{kw}%,item_name.ilike.%{kw}%,item_detail_no.ilike.%{kw}%,model_spec.ilike.%{kw}%,remark.ilike.%{kw}%")
-        items_list = t_query.limit(100).execute().data or []
-    except Exception:
-        items_list = []
+    tab_t1, tab_t2 = st.tabs(["✍️ 신규 입출고 등록", "✏️ 기존 입출고 내역 수정 및 삭제"])
 
-    if not items_list:
-        st.warning("조건에 일치하는 품목이 없습니다. 검색어를 다시 확인해 주세요.")
-    else:
-        if not search_kw_trans.strip():
-            st.info("💡 데이터가 많아 기본적으로 상위 100개 품목을 표시합니다. 찾으시는 품목(`ITEM_01099` 등)이 없다면 위 검색창에 품명이나 코드를 입력해 주세요.")
-
-        item_opts = {f"[{i['item_code']}] {i['item_name']} (상세: {i.get('item_detail_no','-')}, 규격: {i.get('model_spec','-')})": i for i in items_list}
+    with tab_t1:
+        search_kw_trans = st.text_input("🔍 대상 품목 통합 검색 (품명, 코드, 상세번호, 규격, 비고 등)", "", key="trans_search_box")
         
-        selected_label = st.selectbox("🎯 대상 품목 선택", list(item_opts.keys()), key="trans_select")
-        target_item = item_opts[selected_label]
-        item_code = target_item["item_code"]
+        try:
+            t_query = db.supabase.table("items").select("*")
+            if search_kw_trans.strip():
+                kw = search_kw_trans.strip()
+                t_query = t_query.or_(f"item_code.ilike.%{kw}%,item_name.ilike.%{kw}%,item_detail_no.ilike.%{kw}%,model_spec.ilike.%{kw}%,remark.ilike.%{kw}%")
+            items_list = t_query.limit(100).execute().data or []
+        except Exception:
+            items_list = []
 
-        with st.form("trans_form", clear_on_submit=True):
-            col1, col2 = st.columns(2)
-            trans_type = col1.radio("입출고 구분", ["입고", "출고"], horizontal=True)
-            trans_date = col2.date_input("일자", datetime.date.today())
+        if not items_list:
+            st.warning("조건에 일치하는 품목이 없습니다. 검색어를 다시 확인해 주세요.")
+        else:
+            if not search_kw_trans.strip():
+                st.info("💡 데이터가 많아 기본적으로 상위 100개 품목을 표시합니다. 찾으시는 품목이 없다면 위 검색창에 품명이나 코드를 입력해 주세요.")
 
-            col3, col4 = st.columns(2)
-            quantity = col3.number_input("수량", min_value=1, value=1, step=1)
-            unit_price = col4.number_input(f"적용 단가 ({target_item.get('currency', 'KRW')})", min_value=0.0, value=safe_float(target_item.get("unit_price")), step=100.0)
+            item_opts = {f"[{i['item_code']}] {i['item_name']} (상세: {i.get('item_detail_no','-')}, 규격: {i.get('model_spec','-')})": i for i in items_list}
+            
+            selected_label = st.selectbox("🎯 대상 품목 선택", list(item_opts.keys()), key="trans_select")
+            target_item = item_opts[selected_label]
+            item_code = target_item["item_code"]
 
-            col5, col6 = st.columns(2)
-            current_user_str = f"{user['name']} {user['position']}"
-            manager = col5.text_input("담당자 (작성자)", value=current_user_str)
-            requester = col6.text_input("출고/입고 요청자 (*필수)")
+            with st.form("trans_form", clear_on_submit=True):
+                col1, col2 = st.columns(2)
+                trans_type = col1.radio("입출고 구분", ["입고", "출고"], horizontal=True)
+                trans_date = col2.date_input("일자", datetime.date.today())
 
-            remark = st.text_input("비고 (용도, 출처 등)")
-            submitted = st.form_submit_button("입출고 저장 실행")
+                col3, col4 = st.columns(2)
+                quantity = col3.number_input("수량", min_value=1, value=1, step=1)
+                unit_price = col4.number_input(f"적용 단가 ({target_item.get('currency', 'KRW')})", min_value=0.0, value=safe_float(target_item.get("unit_price")), step=100.0)
 
-            if submitted:
-                if not requester:
-                    st.error("요청자는 필수 입력 항목입니다.")
-                else:
-                    with st.spinner("⏳ 입출고 데이터를 처리 중입니다..."):
-                        if trans_type == "입고":
-                            db.register_inbound_lot(
-                                item_code=item_code,
-                                item_name=target_item["item_name"],
-                                category=target_item.get("category_type", "일반"),
-                                inbound_date=str(trans_date),
-                                unit_price=unit_price,
-                                quantity=quantity,
-                                manager=manager,
-                                requester=requester,
-                                remark=remark
-                            )
-                            st.success(f"✅ [{item_code}] {quantity}개 입고 등록이 완료되었습니다.")
-                        else:
-                            db.process_fifo_outbound(
-                                item_code=item_code,
-                                outbound_qty=quantity,
-                                trans_date=str(trans_date),
-                                requester=requester,
-                                manager=manager,
-                                remark=remark
-                            )
+                col5, col6 = st.columns(2)
+                current_user_str = f"{user['name']}"
+                manager = col5.text_input("담당자 (작성자)", value=current_user_str)
+                requester = col6.text_input("출고/입고 요청자 (*필수)")
+
+                remark = st.text_input("비고 (용도, 출처 등)")
+                submitted = st.form_submit_button("입출고 저장 실행")
+
+                if submitted:
+                    if not requester:
+                        st.error("요청자는 필수 입력 항목입니다.")
+                    else:
+                        with st.spinner("⏳ 입출고 데이터를 처리 중입니다..."):
+                            if trans_type == "입고":
+                                db.register_inbound_lot(
+                                    item_code=item_code,
+                                    item_name=target_item["item_name"],
+                                    category=target_item.get("category_type", "일반"),
+                                    inbound_date=str(trans_date),
+                                    unit_price=unit_price,
+                                    quantity=quantity,
+                                    manager=manager,
+                                    requester=requester,
+                                    remark=remark
+                                )
+                                st.success(f"✅ [{item_code}] {quantity}개 입고 등록이 완료되었습니다.")
+                            else:
+                                db.process_fifo_outbound(
+                                    item_code=item_code,
+                                    outbound_qty=quantity,
+                                    trans_date=str(trans_date),
+                                    requester=requester,
+                                    manager=manager,
+                                    remark=remark
+                                )
+                                st.success(f"✅ [{item_code}] {quantity}개 출고 처리 완료되었습니다.")
+                            st.rerun()
+
+            st.markdown("---")
+            st.subheader(f"📄 선택 품목 [{item_code}] 실시간 상세 명세서")
+            render_a4_spec_card(item_code)
+
+    with tab_t2:
+        st.markdown("#### ✏️ 기존 입출고 트랜잭션 내역 수정 및 삭제")
+        st.caption("💡 수정 또는 삭제할 입출고 내역을 검색하여 선택하세요.")
+
+        edit_trans_kw = st.text_input("🔍 내역 검색 (품목코드, 요청자, 담당자, 비고)", "", key="edit_trans_search")
+        try:
+            et_query = db.supabase.table("stock_transactions").select("*").order("trans_date", desc=False)
+            all_trans_list = et_query.limit(200).execute().data or []
+        except Exception:
+            all_trans_list = []
+
+        if edit_trans_kw.strip():
+            ekw = edit_trans_kw.strip().lower()
+            all_trans_list = [t for t in all_trans_list if ekw in str(t.get("item_code","")).lower() or ekw in str(t.get("requester","")).lower() or ekw in str(t.get("manager","")).lower() or ekw in str(t.get("remark","")).lower()]
+
+        if all_trans_list:
+            trans_opts = {f"[ID:{t.get('id')}] {t.get('trans_date')} | 코드:{t.get('item_code')} | 구분:{t.get('trans_type')} | 수량:{t.get('quantity')}개 | 요청자:{t.get('requester')}": t for t in all_trans_list}
+            sel_trans_label = st.selectbox("수정/삭제할 내역 선택:", list(trans_opts.keys()))
+            target_t = trans_opts[sel_trans_label]
+
+            with st.form("edit_trans_form"):
+                col1, col2 = st.columns(2)
+                e_type = col1.selectbox("입출고 구분", ["IN", "OUT"], index=0 if target_t.get("trans_type") in ["IN", "입고"] else 1)
+                
+                try:
+                    default_d = datetime.datetime.strptime(str(target_t.get("trans_date", "")).split(" ")[0], "%Y-%m-%d").date()
+                except:
+                    default_d = datetime.date.today()
+                e_date = col2.date_input("일자", value=default_d)
+
+                col3, col4 = st.columns(2)
+                e_qty = col3.number_input("수량", min_value=1, value=safe_int_clean(target_t.get("quantity"), 1), step=1)
+                e_price = col4.number_input("적용 단가", min_value=0.0, value=safe_float(target_t.get("unit_price"), 0.0), step=100.0)
+
+                col5, col6 = st.columns(2)
+                e_mgr = col5.text_input("담당자", value=safe_str_clean(target_t.get("manager"), ""))
+                e_req = col6.text_input("요청자", value=safe_str_clean(target_t.get("requester"), ""))
+
+                e_rem = st.text_input("비고", value=safe_str_clean(target_t.get("remark"), ""))
+
+                col_btn1, col_btn2 = st.columns(2)
+                submitted_update = col_btn1.form_submit_button("💾 수정 내용 저장")
+                submitted_delete = col_btn2.form_submit_button("🗑️ 해당 내역 삭제")
+
+                if submitted_update:
+                    with st.spinner("⏳ 입출고 내역 수정 중..."):
+                        db.update_transaction(
+                            trans_id=target_t.get("id"),
+                            item_code=target_t.get("item_code"),
+                            trans_type=e_type,
+                            trans_date=str(e_date),
+                            quantity=e_qty,
+                            unit_price=e_price,
+                            manager=e_mgr,
+                            requester=e_req,
+                            remark=e_rem
+                        )
+                        st.success("✅ 선택한 입출고 내역이 성공적으로 수정되었습니다!")
                         st.rerun()
 
-        st.markdown("---")
-        st.subheader(f"📄 선택 품목 [{item_code}] 실시간 상세 명세서")
-        render_a4_spec_card(item_code)
+                if submitted_delete:
+                    with st.spinner("⏳ 입출고 내역 삭제 중..."):
+                        db.delete_transaction(target_t.get("id"))
+                        st.success("✅ 선택한 입출고 내역이 삭제되었습니다!")
+                        st.rerun()
+        else:
+            st.info("검색 조건에 일치하는 입출고 내역이 없습니다.")
 
 # ---------------------------------------------------------
 # 메뉴 3: 품목 관리
@@ -716,7 +793,7 @@ elif menu == MENU_ITEMS:
                             db.supabase.table("items").insert(item_data).execute()
 
                             if initial_qty > 0:
-                                current_user_str = f"{user['name']}"  # 이름만 저장
+                                current_user_str = f"{user['name']}"
                                 db.register_inbound_lot(
                                     item_code=final_code,
                                     item_name=safe_str_clean(item_name),
@@ -1035,7 +1112,7 @@ elif menu == MENU_HISTORY:
         total_hist_count = len(df_trans_all)
         total_hist_pages = max(1, math.ceil(total_hist_count / PAGE_SIZE_HIST))
 
-        col_hp1, col_hp2 = st.columns([1, 4])
+        col_hp1, _ = st.columns([1, 4])
         with col_hp1:
             current_hist_page = st.selectbox("📄 페이지 선택 (10줄씩)", list(range(1, total_hist_pages + 1)), format_func=lambda x: f"{x} 페이지 (총 {total_hist_pages}페이지)")
 
@@ -1047,7 +1124,8 @@ elif menu == MENU_HISTORY:
             df_trans_page,
             use_container_width=True,
             on_select="rerun",
-            selection_mode="single-row"
+            selection_mode="single-row",
+            hide_index=True
         )
 
         selected_rows = selection_event.selection.rows if selection_event and hasattr(selection_event, "selection") else []
@@ -1060,13 +1138,15 @@ elif menu == MENU_HISTORY:
             st.markdown(f"### 📌 선택 품목 [{sel_item_code}] {sel_item_name} 상세 입출고 분석")
 
             try:
-                all_item_trans_resp = db.supabase.table("stock_transactions").select("*").eq("item_code", sel_item_code).order("trans_date", desc=True).execute()
+                all_item_trans_resp = db.supabase.table("stock_transactions").select("*").eq("item_code", sel_item_code).order("trans_date", desc=False).execute()
                 raw_item_trans = all_item_trans_resp.data or []
             except Exception:
                 raw_item_trans = []
 
-            item_table_rows = []
-            for id_sub, t_sub in enumerate(raw_item_trans, 1):
+            item_in_rows, item_out_rows = [], []
+            in_sub_idx, out_sub_idx = 1, 1
+
+            for t_sub in raw_item_trans:
                 t_type_sub = t_sub.get("trans_type", "")
                 qty_sub = safe_int_clean(t_sub.get("quantity"), 0)
                 price_sub = safe_float(t_sub.get("unit_price"), 0.0)
@@ -1090,21 +1170,25 @@ elif menu == MENU_HISTORY:
                 if raw_req_sub in ["초기재고일괄등록", "시스템입고", "None", ""]:
                     raw_req_sub = "-"
 
-                item_table_rows.append({
-                    "No": id_sub,
+                row_dict_sub = {
                     "일자": t_date_sub,
-                    "구분": type_display_sub,
                     "수량": f"{qty_sub:,} 개",
                     "원화환산액": f"{unit_krw_sub:,} 원",
                     "총금액": f"{total_krw_sub:,} 원",
                     "담당자": raw_mgr_sub,
                     "요청자": raw_req_sub,
                     "비고": safe_str_clean(t_sub.get("remark"), "-")
-                })
+                }
 
-            df_item_all = pd.DataFrame(item_table_rows)
-            df_item_in = df_item_all[df_item_all["구분"].str.contains("입고")] if not df_item_all.empty else pd.DataFrame()
-            df_item_out = df_item_all[df_item_all["구분"].str.contains("출고")] if not df_item_all.empty else pd.DataFrame()
+                if t_type_sub in ["IN", "입고"]:
+                    item_in_rows.append({"No": in_sub_idx, **row_dict_sub})
+                    in_sub_idx += 1
+                else:
+                    item_out_rows.append({"No": out_sub_idx, **row_dict_sub})
+                    out_sub_idx += 1
+
+            df_item_in = pd.DataFrame(item_in_rows)
+            df_item_out = pd.DataFrame(item_out_rows)
 
             col_in_m, col_out_m = st.columns(2)
             
@@ -1122,16 +1206,16 @@ elif menu == MENU_HISTORY:
 
             c1, c2 = st.columns(2)
             with c1:
-                st.markdown("#### 📥 입고 내역 리스트 (기초 세팅 포함)")
+                st.markdown("#### 📥 입고 내역 리스트 (오름차순 정렬)")
                 if not df_item_in.empty:
-                    st.dataframe(df_item_in[["No", "일자", "수량", "원화환산액", "총금액", "담당자", "요청자", "비고"]], use_container_width=True)
+                    st.dataframe(df_item_in, use_container_width=True, hide_index=True)
                 else:
                     st.info("입고 내역이 없습니다.")
 
             with c2:
-                st.markdown("#### 📤 출고 내역 리스트")
+                st.markdown("#### 📤 출고 내역 리스트 (오름차순 정렬)")
                 if not df_item_out.empty:
-                    st.dataframe(df_item_out[["No", "일자", "수량", "원화환산액", "총금액", "담당자", "요청자", "비고"]], use_container_width=True)
+                    st.dataframe(df_item_out, use_container_width=True, hide_index=True)
                 else:
                     st.info("출고 내역이 없습니다.")
 
