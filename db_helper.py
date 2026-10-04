@@ -1,142 +1,174 @@
-import io
-import streamlit as st
-from PIL import Image
+import os
+import datetime
 from supabase import create_client, Client
+import streamlit as st
 
-@st.cache_resource
-def init_supabase() -> Client:
-    url = st.secrets["SUPABASE_URL"]
-    key = st.secrets["SUPABASE_KEY"]
-    return create_client(url, key)
+# Supabase 연결 설정 (Streamlit secrets 또는 환경 변수 활용)
+SUPABASE_URL = st.secrets.get("SUPABASE_URL", os.environ.get("SUPABASE_URL", ""))
+SUPABASE_KEY = st.secrets.get(
+    "SUPABASE_KEY", os.environ.get("SUPABASE_KEY", "")
+)
 
-supabase = init_supabase()
+if not SUPABASE_URL or not SUPABASE_KEY:
+    st.error(
+        "Supabase 연결 정보가 설정되지 않았습니다. st.secrets 또는 환경 변수를 확인해주세요."
+    )
 
-def upload_item_image(image_file, item_code: str) -> str:
-    """이미지 압축 후 Supabase Storage 업로드"""
-    try:
-        img = Image.open(image_file)
-        if img.mode in ("RGBA", "P"):
-            img = img.convert("RGB")
-            
-        img.thumbnail((400, 400))
-        
-        buffer = io.BytesIO()
-        img.save(buffer, format="JPEG", quality=80)
-        buffer.seek(0)
-        
-        file_path = f"{item_code}_thumb.jpg"
-        bucket_name = "item-images"
-        
-        supabase.storage.from_(bucket_name).upload(
-            file_path, 
-            buffer.getvalue(), 
-            file_options={"content-type": "image/jpeg", "upsert": "true"}
-        )
-        
-        return supabase.storage.from_(bucket_name).get_public_url(file_path)
-    except Exception as e:
-        st.error(f"이미지 업로드 중 오류 발생: {e}")
-        return None
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-def register_inbound_lot(item_code, item_name, category, inbound_date, unit_price, quantity, image_file=None):
-    """신규 입고 등록 및 Lot 재고 생성"""
-    photo_url = upload_item_image(image_file, item_code) if image_file else None
-    
-    # 1. items 테이블 마스터 등록
-    item_data = {
-        "item_code": item_code,
-        "item_name": item_name,
-        "category_type": category,
-        "unit_price": unit_price,
-        "in_date": str(inbound_date)
-    }
-    if photo_url:
-        item_data["photo_url"] = photo_url
-        
-    supabase.table("items").upsert(item_data).execute()
-    
-    # 2. stock_lots 생성
-    lot_data = {
-        "item_code": item_code,
-        "inbound_date": str(inbound_date),
-        "unit_price": unit_price,
-        "current_qty": quantity
-    }
-    lot_result = supabase.table("stock_lots").insert(lot_data).execute()
-    new_lot_id = lot_result.data[0]["lot_id"] if lot_result.data else None
-    
-    # 3. stock_transactions 이력 등록
-    trans_data = {
-        "trans_date": str(inbound_date),
-        "trans_type": "IN",
-        "lot_id": new_lot_id,
-        "item_code": item_code,
-        "quantity": quantity,
-        "unit_price": unit_price
-    }
-    supabase.table("stock_transactions").insert(trans_data).execute()
-    
-    return new_lot_id
 
 def get_stock_by_lots():
-    """Lot별 재고 및 상세 품목 정보 조회"""
+    """모든 재고 Lot 데이터를 가져옵니다."""
     try:
-        response = supabase.table("stock_lots") \
-            .select("lot_id, item_code, inbound_date, unit_price, current_qty, items(item_name, item_detail_no, model_spec, category_type, category_main, category_sub, shelf_no, zone, device_name, maker, photo_url)") \
-            .gt("current_qty", 0) \
-            .order("inbound_date", desc=False) \
+        resp = (
+            supabase.table("stock_lots")
+            .select("*")
+            .gt("current_qty", 0)
             .execute()
-        return response.data or []
+        )
+        return resp.data or []
     except Exception as e:
-        st.error(f"재고 데이터 조회 중 오류: {e}")
+        st.error(f"재고 Lot 조회 오류: {e}")
         return []
 
-def process_fifo_outbound(item_code: str, outbound_qty: int, trans_date: str):
-    """FIFO 선입선출 출고 처리"""
-    lots_response = supabase.table("stock_lots") \
-        .select("*") \
-        .eq("item_code", item_code) \
-        .gt("current_qty", 0) \
-        .order("inbound_date", asc=True) \
-        .execute()
-        
-    lots = lots_response.data or []
-    total_available = sum(lot["current_qty"] for lot in lots)
-    
-    if total_available < outbound_qty:
-        st.error(f"재고 부족! (현재 남은 재고: {total_available}개 / 요청 수량: {outbound_qty}개)")
-        return False
-        
-    remaining_to_deduct = outbound_qty
-    
-    for lot in lots:
-        if remaining_to_deduct <= 0:
-            break
-            
-        lot_id = lot["lot_id"]
-        current_qty = lot["current_qty"]
-        unit_price = lot["unit_price"]
-        
-        if current_qty <= remaining_to_deduct:
-            deduct_qty = current_qty
-            remaining_to_deduct -= deduct_qty
-            new_qty = 0
-        else:
-            deduct_qty = remaining_to_deduct
-            new_qty = current_qty - remaining_to_deduct
-            remaining_to_deduct = 0
-            
-        supabase.table("stock_lots").update({"current_qty": new_qty}).eq("lot_id", lot_id).execute()
-            
-        trans_data = {
-            "trans_date": str(trans_date),
-            "trans_type": "OUT",
-            "lot_id": lot_id,
+
+def register_inbound_lot(
+    item_code, item_name, category, inbound_date, unit_price, quantity
+):
+    """신규 입고 시 stock_lots와 stock_transactions에 기록을 남깁니다."""
+    try:
+        # 1. stock_lots에 새로운 로트 추가 (기본적으로 오름차순 정렬 및 FIFO 대상이 됨)
+        lot_payload = {
             "item_code": item_code,
-            "quantity": deduct_qty,
-            "unit_price": unit_price
+            "current_qty": int(quantity),
+            "unit_price": float(unit_price),
+            "inbound_date": str(inbound_date),
         }
-        supabase.table("stock_transactions").insert(trans_data).execute()
-        
-    st.success(f"[{item_code}] 총 {outbound_qty}개 선입선출(FIFO) 출고 처리 완료!")
-    return True
+        supabase.table("stock_lots").insert(lot_payload).execute()
+
+        # 2. stock_transactions에 입고 거래 내역 추가
+        trans_payload = {
+            "item_code": item_code,
+            "trans_type": "IN",
+            "quantity": int(quantity),
+            "unit_price": float(unit_price),
+            "trans_date": str(inbound_date),
+            "requester": "시스템입고",
+            "manager": "관리자",
+            "remark": "자재 입고 등록",
+        }
+        supabase.table("stock_transactions").insert(trans_payload).execute()
+        return True
+    except Exception as e:
+        st.error(f"입고 등록 처리 중 오류 발생: {e}")
+        return False
+
+
+def process_fifo_outbound(
+    item_code,
+    outbound_qty,
+    trans_date,
+    requester="출고담당자",
+    manager="관리자",
+    remark="",
+):
+    """
+    선입선출(FIFO) 방식으로 출고를 처리합니다.
+    입고일(inbound_date)이 빠른 순서대로 로트에서 수량을 차감합니다.
+    (TypeError를 유발하던 asc=True 인자를 제거하고 기본 오름차순 정렬 적용)
+    """
+    try:
+        # 1. 재고가 남아있는 로트들을 입고일 기준 오름차순 조회
+        lots_resp = (
+            supabase.table("stock_lots")
+            .select("*")
+            .eq("item_code", item_code)
+            .gt("current_qty", 0)
+            .order("inbound_date")
+            .execute()
+        )
+
+        lots = lots_resp.data or []
+        total_available = sum(int(l.get("current_qty", 0)) for l in lots)
+
+        if total_available < outbound_qty:
+            st.error(
+                f"❌ 출고 가능 재고가 부족합니다. (현재 재고: {total_available}개, 요청 수량: {outbound_qty}개)"
+            )
+            return False
+
+        remaining_to_out = int(outbound_qty)
+        avg_unit_price = 0.0
+
+        for lot in lots:
+            if remaining_to_out <= 0:
+                break
+
+            lot_id = lot["lot_id"]
+            current_qty = int(lot["current_qty"])
+            u_price = float(lot["unit_price"])
+
+            if current_qty <= remaining_to_out:
+                # 해당 로트의 수량이 소모되거나 딱 맞아떨어지는 경우
+                deduct_qty = current_qty
+                remaining_to_out -= current_qty
+
+                # 로트 잔고를 0으로 업데이트
+                supabase.table("stock_lots").update(
+                    {"current_qty": 0}
+                ).eq("lot_id", lot_id).execute()
+            else:
+                # 해당 로트의 수량이 충분한 경우 (부분 차감)
+                deduct_qty = remaining_to_out
+                new_qty = current_qty - remaining_to_out
+                remaining_to_out = 0
+
+                supabase.table("stock_lots").update(
+                    {"current_qty": new_qty}
+                ).eq("lot_id", lot_id).execute()
+
+            avg_unit_price = u_price
+
+        # 2. stock_transactions에 출고 거래 내역 기록
+        trans_payload = {
+            "item_code": item_code,
+            "trans_type": "OUT",
+            "quantity": int(outbound_qty),
+            "unit_price": avg_unit_price,
+            "trans_date": str(trans_date),
+            "requester": requester,
+            "manager": manager,
+            "remark": remark if remark else "FIFO 선입선출 출고",
+        }
+        supabase.table("stock_transactions").insert(trans_payload).execute()
+
+        st.success(f"✅ 선입선출(FIFO) 출고 처리 완료 ({outbound_qty}개 차감)")
+        return True
+
+    except Exception as e:
+        st.error(f"FIFO 출고 처리 중 오류 발생: {e}")
+        return False
+
+
+def upload_item_image(img_file, item_code):
+    """품목 이미지를 Supabase Storage에 업로드하고 공인 URL을 반환합니다."""
+    if not img_file:
+        return None
+    try:
+        file_ext = img_file.name.split(".")[-1]
+        file_path = f"items/{item_code}.{file_ext}"
+        bytes_data = img_file.getvalue()
+
+        # 기존 파일이 있다면 업로드 오버라이드
+        supabase.storage.from_("item-images").upload(
+            file_path,
+            bytes_data,
+            file_options={"upsert": "true", "content-type": img_file.type},
+        )
+        public_url = supabase.storage.from_("item-images").get_public_url(
+            file_path
+        )
+        return public_url
+    except Exception as e:
+        # 버킷이 없거나 권한 문제 발생 시 None 반환
+        return None
