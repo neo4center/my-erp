@@ -158,20 +158,22 @@ def render_a4_spec_card(item_code):
         t_rate = get_exchange_rate_by_year(curr, t_year)
         t_krw_unit = price * t_rate
         
-        # 담당자 이름 정제 (직책 제거 및 이름 추출)
-        raw_mgr = safe_str_clean(t.get("manager"), "-")
-        if raw_mgr != "-":
+        # 담당자 이름 정제 (직책 제거 및 이름 추출, 없으면 '최광호' 부여)
+        raw_mgr = safe_str_clean(t.get("manager"), "")
+        if not raw_mgr or raw_mgr in ["-", "None", ""]:
+            raw_mgr = "최광호"
+        else:
             for pos in POSITIONS:
                 raw_mgr = raw_mgr.replace(pos, "").strip()
         
-        # 요청자 정제 (초기등록 또는 비어있으면 '-')
+        # 요청자 정제 (개별등록이거나 시스템명이면 '-')
         raw_req = safe_str_clean(t.get("requester"), "-")
-        if raw_req in ["-", "초기재고일괄등록", "시스템입고"]:
-            raw_req = "-"
+        if raw_req in ["-", "초기재고일괄등록", "시스템입고", "None", ""]:
+            raw_req = "-" if t_type in ["IN", "입고"] else "출고담당자"
 
         # 비고 연동 (거래 내역에 비고가 없으면 품목 마스터의 비고를 폴백으로 사용)
         t_remark = safe_str_clean(t.get("remark"), "")
-        if not t_remark or t_remark == "-":
+        if not t_remark or t_remark in ["-", "None", ""]:
             t_remark = safe_str_clean(item.get("remark"), "-")
 
         row_dict = {
@@ -714,7 +716,7 @@ elif menu == MENU_ITEMS:
                             db.supabase.table("items").insert(item_data).execute()
 
                             if initial_qty > 0:
-                                current_user_str = f"{user['name']} {user['position']}"
+                                current_user_str = f"{user['name']}"  # 이름만 저장
                                 db.register_inbound_lot(
                                     item_code=final_code,
                                     item_name=safe_str_clean(item_name),
@@ -723,7 +725,7 @@ elif menu == MENU_ITEMS:
                                     unit_price=float(unit_price),
                                     quantity=int(initial_qty),
                                     manager=current_user_str,
-                                    requester="-",  # 개별 직접 등록은 요청자 빈칸(-)
+                                    requester="-",
                                     remark=safe_str_clean(remark, "-")
                                 )
 
@@ -805,7 +807,7 @@ elif menu == MENU_ITEMS:
                             db.supabase.table("stock_transactions").delete().eq("item_code", target_icode).execute()
                             
                             if e_qty > 0:
-                                current_user_str = f"{user['name']} {user['position']}"
+                                current_user_str = f"{user['name']}"
                                 db.register_inbound_lot(
                                     item_code=target_icode,
                                     item_name=safe_str_clean(e_name),
@@ -870,7 +872,7 @@ elif menu == MENU_ITEMS:
                     lots_payloads = []
                     trans_payloads = []
                     codes_to_reset = []
-                    current_user_str = f"{user['name']} {user['position']}"
+                    current_user_str = f"{user['name']}"
 
                     for _, r in df_up.iterrows():
                         i_name = safe_str_clean(r.get("item_name"))
@@ -1006,8 +1008,10 @@ elif menu == MENU_HISTORY:
             
             type_display = "입고 (IN)" if t_type in ["IN", "입고"] else "출고 (OUT)"
 
-            raw_mgr = safe_str_clean(t.get("manager"), "-")
-            if raw_mgr != "-":
+            raw_mgr = safe_str_clean(t.get("manager"), "")
+            if not raw_mgr or raw_mgr == "-":
+                raw_mgr = "최광호"
+            else:
                 for pos in POSITIONS:
                     raw_mgr = raw_mgr.replace(pos, "").strip()
 
@@ -1075,13 +1079,15 @@ elif menu == MENU_HISTORY:
                 
                 type_display_sub = "입고 (IN)" if t_type_sub in ["IN", "입고"] else "출고 (OUT)"
 
-                raw_mgr_sub = safe_str_clean(t_sub.get("manager"), "-")
-                if raw_mgr_sub != "-":
+                raw_mgr_sub = safe_str_clean(t_sub.get("manager"), "")
+                if not raw_mgr_sub or raw_mgr_sub == "-":
+                    raw_mgr_sub = "최광호"
+                else:
                     for pos in POSITIONS:
                         raw_mgr_sub = raw_mgr_sub.replace(pos, "").strip()
 
                 raw_req_sub = safe_str_clean(t_sub.get("requester"), "-")
-                if raw_req_sub in ["초기재고일괄등록", "시스템입고"]:
+                if raw_req_sub in ["초기재고일괄등록", "시스템입고", "None", ""]:
                     raw_req_sub = "-"
 
                 item_table_rows.append({
