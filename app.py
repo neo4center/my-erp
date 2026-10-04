@@ -107,78 +107,6 @@ def get_exchange_rate_by_year(currency, year):
         return currency_rates[0]
     return 1.0
 
-def render_html_transaction_table(rows_data):
-    """입고/출고 내역을 동일한 HTML 표 구조로 렌더링하여 칼럼 폭과 정렬을 완벽하게 맞춤"""
-    if not rows_data:
-        return "<p style='color: gray; font-size: 13px; text-align: center; padding: 10px;'>※ 내역이 없습니다.</p>"
-    
-    html_code = """
-    <style>
-    .erp-trans-table {
-        width: 100%;
-        border-collapse: collapse;
-        margin-top: 5px;
-        margin-bottom: 15px;
-        background-color: #ffffff;
-        font-size: 14px;
-        table-layout: fixed;
-    }
-    .erp-trans-table th, .erp-trans-table td {
-        border: 1px solid #e0e0e0;
-        padding: 10px 12px;
-        word-break: break-all;
-    }
-    /* 칼럼별 폭 강제 고정 (입고/출고 동일) */
-    .erp-trans-table th:nth-child(1), .erp-trans-table td:nth-child(1) { width: 6%; text-align: center; }  /* No */
-    .erp-trans-table th:nth-child(2), .erp-trans-table td:nth-child(2) { width: 14%; text-align: center; } /* 일자 */
-    .erp-trans-table th:nth-child(3), .erp-trans-table td:nth-child(3) { width: 10%; text-align: center; } /* 수량 */
-    .erp-trans-table th:nth-child(4), .erp-trans-table td:nth-child(4) { width: 14%; text-align: center; } /* 원화환산액 */
-    .erp-trans-table th:nth-child(5), .erp-trans-table td:nth-child(5) { width: 14%; text-align: center; } /* 총금액 */
-    .erp-trans-table th:nth-child(6), .erp-trans-table td:nth-child(6) { width: 12%; text-align: center; } /* 담당자 */
-    .erp-trans-table th:nth-child(7), .erp-trans-table td:nth-child(7) { width: 12%; text-align: center; } /* 요청자 */
-    .erp-trans-table th:nth-child(8), .erp-trans-table td:nth-child(8) { width: 18%; text-align: left; }   /* 비고 */
-
-    .erp-trans-table th {
-        background-color: #f8f9fa;
-        color: #333333;
-        font-weight: bold;
-        text-align: center !important;
-    }
-    .erp-trans-table td {
-        color: #111111;
-    }
-    </style>
-    <table class="erp-trans-table">
-        <thead>
-            <tr>
-                <th>No</th>
-                <th>일자</th>
-                <th>수량</th>
-                <th>원화환산액</th>
-                <th>총금액</th>
-                <th>담당자</th>
-                <th>요청자</th>
-                <th>비고</th>
-            </tr>
-        </thead>
-        <tbody>
-    """
-    for r in rows_data:
-        html_code += f"""
-            <tr>
-                <td style="text-align: center;">{r['No']}</td>
-                <td style="text-align: center;">{r['일자']}</td>
-                <td style="text-align: center;">{r['수량']}</td>
-                <td style="text-align: center;">{r['원화환산액']}</td>
-                <td style="text-align: center;">{r['총금액']}</td>
-                <td style="text-align: center;">{r['담당자']}</td>
-                <td style="text-align: center;">{r['요청자']}</td>
-                <td style="text-align: left;">{r['비고']}</td>
-            </tr>
-        """
-    html_code += "</tbody></table>"
-    return html_code
-
 def render_a4_spec_card(item_code):
     item_resp = db.supabase.table("items").select("*").eq("item_code", item_code).execute()
     if not item_resp.data:
@@ -217,7 +145,6 @@ def render_a4_spec_card(item_code):
 
     unit_krw_display = int(round(representative_price * representative_rate))
 
-    # 오름차순(날짜순) 정렬 보장
     trans_resp = db.supabase.table("stock_transactions").select("*").eq("item_code", item_code).order("trans_date", desc=False).limit(100).execute()
     trans_data = trans_resp.data or []
     
@@ -266,6 +193,8 @@ def render_a4_spec_card(item_code):
             out_rows.append(row_dict)
             out_idx += 1
 
+    df_in = pd.DataFrame(in_rows)
+    df_out = pd.DataFrame(out_rows)
     category_full = f"{safe_str_clean(item.get('category_main'))} - {safe_str_clean(item.get('category_sub'))} - 선반:{safe_str_clean(item.get('shelf_no'))}"
 
     st.markdown("""
@@ -306,10 +235,44 @@ def render_a4_spec_card(item_code):
 
         st.markdown("---")
         st.markdown("### 📥 1. 입고 내역 (오름차순 정렬)")
-        st.markdown(render_html_transaction_table(in_rows), unsafe_allow_html=True)
+        if not df_in.empty:
+            st.dataframe(
+                df_in,
+                column_config={
+                    "No": st.column_config.NumberColumn("No", width="small", format="%d"),
+                    "일자": st.column_config.TextColumn("일자", width="medium"),
+                    "수량": st.column_config.TextColumn("수량", width="small"),
+                    "원화환산액": st.column_config.TextColumn("원화환산액", width="medium"),
+                    "총금액": st.column_config.TextColumn("총금액", width="medium"),
+                    "담당자": st.column_config.TextColumn("담당자", width="small"),
+                    "요청자": st.column_config.TextColumn("요청자", width="small"),
+                    "비고": st.column_config.TextColumn("비고", width="large")
+                },
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.caption("※ 입고 내역이 없습니다.")
 
         st.markdown("### 📤 2. 출고 내역 (오름차순 정렬)")
-        st.markdown(render_html_transaction_table(out_rows), unsafe_allow_html=True)
+        if not df_out.empty:
+            st.dataframe(
+                df_out,
+                column_config={
+                    "No": st.column_config.NumberColumn("No", width="small", format="%d"),
+                    "일자": st.column_config.TextColumn("일자", width="medium"),
+                    "수량": st.column_config.TextColumn("수량", width="small"),
+                    "원화환산액": st.column_config.TextColumn("원화환산액", width="medium"),
+                    "총금액": st.column_config.TextColumn("총금액", width="medium"),
+                    "담당자": st.column_config.TextColumn("담당자", width="small"),
+                    "요청자": st.column_config.TextColumn("요청자", width="small"),
+                    "비고": st.column_config.TextColumn("비고", width="large")
+                },
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.caption("※ 출고 내역이 없습니다.")
 
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1256,10 +1219,44 @@ elif menu == MENU_HISTORY:
             col_out_m.metric("📤 누적 출고 총액", f"{total_out_amt:,.0f} 원", f"총 {len(item_out_rows)}건 출고")
 
             st.markdown("#### 📥 입고 내역 리스트 (오름차순 정렬)")
-            st.markdown(render_html_transaction_table(item_in_rows), unsafe_allow_html=True)
+            if item_in_rows:
+                st.dataframe(
+                    pd.DataFrame(item_in_rows),
+                    column_config={
+                        "No": st.column_config.NumberColumn("No", width="small", format="%d"),
+                        "일자": st.column_config.TextColumn("일자", width="medium"),
+                        "수량": st.column_config.TextColumn("수량", width="small"),
+                        "원화환산액": st.column_config.TextColumn("원화환산액", width="medium"),
+                        "총금액": st.column_config.TextColumn("총금액", width="medium"),
+                        "담당자": st.column_config.TextColumn("담당자", width="small"),
+                        "요청자": st.column_config.TextColumn("요청자", width="small"),
+                        "비고": st.column_config.TextColumn("비고", width="large")
+                    },
+                    use_container_width=True,
+                    hide_index=True
+                )
+            else:
+                st.info("입고 내역이 없습니다.")
 
             st.markdown("#### 📤 출고 내역 리스트 (오름차순 정렬)")
-            st.markdown(render_html_transaction_table(item_out_rows), unsafe_allow_html=True)
+            if item_out_rows:
+                st.dataframe(
+                    pd.DataFrame(item_out_rows),
+                    column_config={
+                        "No": st.column_config.NumberColumn("No", width="small", format="%d"),
+                        "일자": st.column_config.TextColumn("일자", width="medium"),
+                        "수량": st.column_config.TextColumn("수량", width="small"),
+                        "원화환산액": st.column_config.TextColumn("원화환산액", width="medium"),
+                        "총금액": st.column_config.TextColumn("총금액", width="medium"),
+                        "담당자": st.column_config.TextColumn("담당자", width="small"),
+                        "요청자": st.column_config.TextColumn("요청자", width="small"),
+                        "비고": st.column_config.TextColumn("비고", width="large")
+                    },
+                    use_container_width=True,
+                    hide_index=True
+                )
+            else:
+                st.info("출고 내역이 없습니다.")
 
         st.markdown("---")
         col_down1, col_down2 = st.columns([2, 2])
