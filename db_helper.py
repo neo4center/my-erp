@@ -18,7 +18,6 @@ def get_stock_by_lots():
 
 def register_inbound_lot(item_code, item_name, category, inbound_date, unit_price, quantity, manager, requester, remark):
     try:
-        # Lot 테이블 등록
         supabase.table("stock_lots").insert({
             "item_code": item_code,
             "current_qty": quantity,
@@ -26,7 +25,6 @@ def register_inbound_lot(item_code, item_name, category, inbound_date, unit_pric
             "inbound_date": inbound_date
         }).execute()
 
-        # 트랜잭션 테이블 등록 (담당자, 요청자, 비고 정확히 저장)
         supabase.table("stock_transactions").insert({
             "item_code": item_code,
             "trans_type": "IN",
@@ -61,7 +59,6 @@ def process_fifo_outbound(item_code, outbound_qty, trans_date, requester, manage
                 remaining_qty = 0
                 supabase.table("stock_lots").update({"current_qty": new_qty}).eq("lot_id", lot_id).execute()
 
-        # 출고 트랜잭션 기록 (요청자, 담당자, 비고 정확히 저장)
         supabase.table("stock_transactions").insert({
             "item_code": item_code,
             "trans_type": "OUT",
@@ -74,6 +71,26 @@ def process_fifo_outbound(item_code, outbound_qty, trans_date, requester, manage
         }).execute()
     except Exception as e:
         st.error(f"출고 처리 중 오류 발생: {e}")
+
+def update_transaction(trans_id, item_code, trans_type, trans_date, quantity, unit_price, manager, requester, remark):
+    try:
+        supabase.table("stock_transactions").update({
+            "trans_type": trans_type,
+            "trans_date": trans_date,
+            "quantity": quantity,
+            "unit_price": unit_price,
+            "manager": manager,
+            "requester": requester,
+            "remark": remark
+        }).eq("id", trans_id).execute()
+    except Exception as e:
+        st.error(f"입출고 내역 수정 중 오류 발생: {e}")
+
+def delete_transaction(trans_id):
+    try:
+        supabase.table("stock_transactions").delete().eq("id", trans_id).execute()
+    except Exception as e:
+        st.error(f"입출고 내역 삭제 중 오류 발생: {e}")
 
 def upload_item_image(image_file, item_code):
     try:
