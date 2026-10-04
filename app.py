@@ -158,15 +158,31 @@ def render_a4_spec_card(item_code):
         t_rate = get_exchange_rate_by_year(curr, t_year)
         t_krw_unit = price * t_rate
         
+        # 담당자 이름 정제 (직책 제거 및 이름 추출)
+        raw_mgr = safe_str_clean(t.get("manager"), "-")
+        if raw_mgr != "-":
+            for pos in POSITIONS:
+                raw_mgr = raw_mgr.replace(pos, "").strip()
+        
+        # 요청자 정제 (초기등록 또는 비어있으면 '-')
+        raw_req = safe_str_clean(t.get("requester"), "-")
+        if raw_req in ["-", "초기재고일괄등록", "시스템입고"]:
+            raw_req = "-"
+
+        # 비고 연동 (거래 내역에 비고가 없으면 품목 마스터의 비고를 폴백으로 사용)
+        t_remark = safe_str_clean(t.get("remark"), "")
+        if not t_remark or t_remark == "-":
+            t_remark = safe_str_clean(item.get("remark"), "-")
+
         row_dict = {
             "No": idx,
             "일자": t_date,
             "수량": f"{qty:,} 개",
             "원화환산액": f"{round(t_krw_unit):,} 원",
             "총금액": f"{round(qty * t_krw_unit):,} 원",
-            "담당자": safe_str_clean(t.get("manager"), "-"),
-            "요청자": safe_str_clean(t.get("requester"), "-"),
-            "비고": safe_str_clean(t.get("remark"), "-")
+            "담당자": raw_mgr,
+            "요청자": raw_req,
+            "비고": t_remark
         }
         if t_type in ["IN", "입고"]:
             in_rows.append(row_dict)
@@ -707,8 +723,8 @@ elif menu == MENU_ITEMS:
                                     unit_price=float(unit_price),
                                     quantity=int(initial_qty),
                                     manager=current_user_str,
-                                    requester=current_user_str,
-                                    remark=safe_str_clean(remark, "개별 직접 등록")
+                                    requester="-",  # 개별 직접 등록은 요청자 빈칸(-)
+                                    remark=safe_str_clean(remark, "-")
                                 )
 
                             st.success(f"🎉 신규 품목 [{final_code}] 및 기초 재고 등록 완료!")
@@ -798,8 +814,8 @@ elif menu == MENU_ITEMS:
                                     unit_price=float(e_price),
                                     quantity=int(e_qty),
                                     manager=current_user_str,
-                                    requester=current_user_str,
-                                    remark=safe_str_clean(e_remark, "품목 수정 재고 재생성")
+                                    requester="-",
+                                    remark=safe_str_clean(e_remark, "-")
                                 )
 
                             st.success("✅ 품목 정보 및 재고 수량이 성공적으로 수정되었습니다!")
@@ -905,7 +921,7 @@ elif menu == MENU_ITEMS:
                                 "quantity": init_qty,
                                 "unit_price": u_price,
                                 "trans_date": in_d,
-                                "requester": "초기재고일괄등록",
+                                "requester": "-",
                                 "manager": current_user_str,
                                 "remark": r_remark
                             })
@@ -942,7 +958,7 @@ elif menu == MENU_HISTORY:
     with col_h_top2:
         if st.button("📂 기초재고 세팅 데이터 확인 및 다운로드"):
             try:
-                base_trans = db.supabase.table("stock_transactions").select("*").eq("requester", "초기재고일괄등록").execute().data or []
+                base_trans = db.supabase.table("stock_transactions").select("*").eq("requester", "-").execute().data or []
                 if base_trans:
                     df_base = pd.DataFrame(base_trans)
                     b_excel = io.BytesIO()
@@ -958,7 +974,7 @@ elif menu == MENU_HISTORY:
     hist_search = st.text_input("🔍 운영 입출고 내역 검색 (품목코드, 요청자, 담당자, 비고 등)", "")
 
     try:
-        h_query = db.supabase.table("stock_transactions").select("*").neq("requester", "초기재고일괄등록").order("trans_date", desc=True)
+        h_query = db.supabase.table("stock_transactions").select("*").neq("requester", "초기재고일괄등록").neq("requester", "시스템입고").order("trans_date", desc=True)
         trans_data = h_query.limit(5000).execute().data or []
     except Exception:
         trans_data = []
@@ -990,6 +1006,11 @@ elif menu == MENU_HISTORY:
             
             type_display = "입고 (IN)" if t_type in ["IN", "입고"] else "출고 (OUT)"
 
+            raw_mgr = safe_str_clean(t.get("manager"), "-")
+            if raw_mgr != "-":
+                for pos in POSITIONS:
+                    raw_mgr = raw_mgr.replace(pos, "").strip()
+
             table_rows.append({
                 "No": idx,
                 "일자": t_date,
@@ -999,7 +1020,7 @@ elif menu == MENU_HISTORY:
                 "수량": f"{qty:,} 개",
                 "원화환산액": f"{unit_krw:,} 원",
                 "총금액": f"{total_krw:,} 원",
-                "담당자": safe_str_clean(t.get("manager"), "-"),
+                "담당자": raw_mgr,
                 "요청자": safe_str_clean(t.get("requester"), "-"),
                 "비고": safe_str_clean(t.get("remark"), "-")
             })
@@ -1054,6 +1075,15 @@ elif menu == MENU_HISTORY:
                 
                 type_display_sub = "입고 (IN)" if t_type_sub in ["IN", "입고"] else "출고 (OUT)"
 
+                raw_mgr_sub = safe_str_clean(t_sub.get("manager"), "-")
+                if raw_mgr_sub != "-":
+                    for pos in POSITIONS:
+                        raw_mgr_sub = raw_mgr_sub.replace(pos, "").strip()
+
+                raw_req_sub = safe_str_clean(t_sub.get("requester"), "-")
+                if raw_req_sub in ["초기재고일괄등록", "시스템입고"]:
+                    raw_req_sub = "-"
+
                 item_table_rows.append({
                     "No": id_sub,
                     "일자": t_date_sub,
@@ -1061,8 +1091,8 @@ elif menu == MENU_HISTORY:
                     "수량": f"{qty_sub:,} 개",
                     "원화환산액": f"{unit_krw_sub:,} 원",
                     "총금액": f"{total_krw_sub:,} 원",
-                    "담당자": safe_str_clean(t_sub.get("manager"), "-"),
-                    "요청자": safe_str_clean(t_sub.get("requester"), "-"),
+                    "담당자": raw_mgr_sub,
+                    "요청자": raw_req_sub,
                     "비고": safe_str_clean(t_sub.get("remark"), "-")
                 })
 
@@ -1239,7 +1269,7 @@ elif menu == "👥 사용자 관리 (관리자)":
             sel_del_label = st.selectbox("삭제할 사용자 계정 선택:", list(del_opts.keys()))
             target_del_emp = del_opts[sel_del_label]
 
-            st.warning(f"⚠️️ 선택한 계정 (`{target_del_emp}`)을 삭제하시겠습니까? 삭제된 계정은 복구할 수 없습니다.")
+            st.warning(f"⚠️ 선택한 계정 (`{target_del_emp}`)을 삭제하시겠습니까? 삭제된 계정은 복구할 수 없습니다.")
             if st.button("❌ 선택 계정 즉시 삭제"):
                 if target_del_emp == user["emp_no"]:
                     st.error("현재 로그인되어 있는 본인 계정은 삭제할 수 없습니다.")
