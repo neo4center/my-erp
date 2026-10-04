@@ -149,7 +149,7 @@ def render_a4_spec_card(item_code):
     trans_data = trans_resp.data or []
     
     in_rows, out_rows = [], []
-    for t in trans_data:
+    for idx, t in enumerate(trans_data, 1):
         t_type = t.get("trans_type", "")
         qty = safe_int_clean(t.get("quantity"), 0)
         price = safe_float(t.get("unit_price"), 0.0)
@@ -159,9 +159,14 @@ def render_a4_spec_card(item_code):
         t_krw_unit = price * t_rate
         
         row_dict = {
-            "일자": t_date, "수량": qty, "단가": price,
-            "원화환산액": round(t_krw_unit), "총금액": round(qty * t_krw_unit),
-            "요청자": t.get("requester", "-"), "담당자": t.get("manager", "-"), "비고": t.get("remark", "-")
+            "No": idx,
+            "일자": t_date,
+            "수량": f"{qty:,} 개",
+            "원화환산액": f"{round(t_krw_unit):,} 원",
+            "총금액": f"{round(qty * t_krw_unit):,} 원",
+            "담당자": t.get("manager", "-"),
+            "요청자": t.get("requester", "-"),
+            "비고": t.get("remark", "-")
         }
         if t_type in ["IN", "입고"]:
             in_rows.append(row_dict)
@@ -179,6 +184,8 @@ def render_a4_spec_card(item_code):
     .info-table { width: 100%; border-collapse: collapse; margin-bottom: 15px; }
     .info-table th, .info-table td { border: 1px solid #ccc; padding: 8px 12px; font-size: 14px; }
     .info-table th { background-color: #f4f4f4; font-weight: bold; width: 18%; text-align: center; }
+    /* 테이블 내부 텍스트 가운데 정렬 스타일 */
+    table.dataframe th, table.dataframe td { text-align: center !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -211,13 +218,13 @@ def render_a4_spec_card(item_code):
         st.markdown("---")
         st.markdown("### 📥 1. 입고 내역")
         if not df_in.empty:
-            st.dataframe(df_in, column_config={"단가": st.column_config.NumberColumn(format="%,.2f"), "원화환산액": st.column_config.NumberColumn(format="%d 원"), "총금액": st.column_config.NumberColumn(format="%d 원")}, use_container_width=True)
+            st.markdown(df_in.to_html(index=False, classes="dataframe", justify="center"), unsafe_allow_html=True)
         else:
             st.caption("※ 입고 내역이 없습니다.")
 
         st.markdown("### 📤 2. 출고 내역")
         if not df_out.empty:
-            st.dataframe(df_out, column_config={"단가": st.column_config.NumberColumn(format="%,.2f"), "원화환산액": st.column_config.NumberColumn(format="%d 원"), "총금액": st.column_config.NumberColumn(format="%d 원")}, use_container_width=True)
+            st.markdown(df_out.to_html(index=False, classes="dataframe", justify="center"), unsafe_allow_html=True)
         else:
             st.caption("※ 출고 내역이 없습니다.")
 
@@ -530,7 +537,7 @@ if menu == MENU_STOCK:
         st.info("조건에 일치하는 품목 데이터가 없습니다.")
 
 # ---------------------------------------------------------
-# 메뉴 2: 입출고 등록 (서버사이드 검색 적용)
+# 메뉴 2: 입출고 등록
 # ---------------------------------------------------------
 elif menu == MENU_TRANS:
     st.subheader("📝 자재 입출고 등록 (FIFO 선입선출)")
@@ -846,6 +853,7 @@ elif menu == MENU_ITEMS:
                         u_price = safe_float(r.get("unit_price"), 0.0)
                         init_qty = safe_int_clean(r.get("initial_quantity"), 0)
                         in_d = clean_date(r.get("in_date"))
+                        r_remark = safe_str_clean(r.get("remark"), "기초 재고 엑셀 일괄 세팅")
 
                         codes_to_reset.append(i_code)
 
@@ -865,7 +873,7 @@ elif menu == MENU_ITEMS:
                             "in_date": in_d,
                             "currency": safe_str_clean(r.get("currency"), "KRW"),
                             "unit_price": u_price,
-                            "remark": safe_str_clean(r.get("remark"))
+                            "remark": r_remark
                         }
                         items_payloads.append(item_payload)
 
@@ -884,7 +892,7 @@ elif menu == MENU_ITEMS:
                                 "trans_date": in_d,
                                 "requester": "초기재고일괄등록",
                                 "manager": f"{user['name']} {user['position']}",
-                                "remark": "기초 재고 엑셀 일괄 세팅"
+                                "remark": r_remark
                             })
 
                     if items_payloads:
@@ -935,7 +943,7 @@ elif menu == MENU_HISTORY:
     hist_search = st.text_input("🔍 운영 입출고 내역 검색 (품목코드, 요청자, 담당자, 비고 등)", "")
 
     try:
-        h_query = db.supabase.table("stock_transactions").select("*").neq("requester", "초기재고일괄등록").order("trans_date", desc=True)
+        h_query = db.supabase.table("stock_transactions").select("*").order("trans_date", desc=True)
         trans_data = h_query.limit(5000).execute().data or []
     except Exception:
         trans_data = []
@@ -949,7 +957,7 @@ elif menu == MENU_HISTORY:
         item_info_map = {i["item_code"]: i for i in (items_resp.data or [])}
 
         table_rows = []
-        for t in trans_data:
+        for idx, t in enumerate(trans_data, 1):
             icode = t.get("item_code", "-")
             iinfo = item_info_map.get(icode, {})
             iname = iinfo.get("item_name", "-")
@@ -968,9 +976,17 @@ elif menu == MENU_HISTORY:
             type_display = "입고 (IN)" if t_type in ["IN", "입고"] else "출고 (OUT)"
 
             table_rows.append({
-                "일자": t_date, "구분": type_display, "품목코드": icode, "품명": iname,
-                "수량": qty, "단가": price, "원화환산액": unit_krw, "총금액": total_krw,
-                "요청자": t.get("requester", "-"), "담당자": t.get("manager", "-"), "비고": t.get("remark", "-")
+                "No": idx,
+                "일자": t_date,
+                "구분": type_display,
+                "품목코드": icode,
+                "품명": iname,
+                "수량": f"{qty:,} 개",
+                "원화환산액": f"{unit_krw:,} 원",
+                "총금액": f"{total_krw:,} 원",
+                "담당자": t.get("manager", "-"),
+                "요청자": t.get("requester", "-"),
+                "비고": t.get("remark", "-")
             })
 
         df_trans_all = pd.DataFrame(table_rows)
@@ -989,12 +1005,6 @@ elif menu == MENU_HISTORY:
 
         selection_event = st.dataframe(
             df_trans_page,
-            column_config={
-                "단가": st.column_config.NumberColumn(format="%,.2f"),
-                "원화환산액": st.column_config.NumberColumn(format="%d 원"),
-                "총금액": st.column_config.NumberColumn(format="%d 원"),
-                "수량": st.column_config.NumberColumn(format="%d 개")
-            },
             use_container_width=True,
             on_select="rerun",
             selection_mode="single-row"
@@ -1014,8 +1024,16 @@ elif menu == MENU_HISTORY:
             df_item_out = df_item_trans[df_item_trans["구분"].str.contains("출고")]
 
             col_in_m, col_out_m = st.columns(2)
-            total_in_amt = round(df_item_in["총금액"].sum()) if not df_item_in.empty else 0
-            total_out_amt = round(df_item_out["총금액"].sum()) if not df_item_out.empty else 0
+            
+            # 숫자 파싱을 위한 보조 함수
+            def parse_amt(val):
+                try:
+                    return int(str(val).replace(" 원", "").replace(",", ""))
+                except:
+                    return 0
+
+            total_in_amt = sum(parse_amt(v) for v in df_item_in["총금액"]) if not df_item_in.empty else 0
+            total_out_amt = sum(parse_amt(v) for v in df_item_out["총금액"]) if not df_item_out.empty else 0
 
             col_in_m.metric("📥 누적 입고 총액", f"{total_in_amt:,.0f} 원", f"총 {len(df_item_in)}건 입고")
             col_out_m.metric("📤 누적 출고 총액", f"{total_out_amt:,.0f} 원", f"총 {len(df_item_out)}건 출고")
@@ -1024,14 +1042,14 @@ elif menu == MENU_HISTORY:
             with c1:
                 st.markdown("#### 📥 입고 내역 리스트")
                 if not df_item_in.empty:
-                    st.dataframe(df_item_in[["일자", "수량", "단가", "원화환산액", "총금액", "요청자", "비고"]], column_config={"단가": st.column_config.NumberColumn(format="%,.2f"), "원화환산액": st.column_config.NumberColumn(format="%d 원"), "총금액": st.column_config.NumberColumn(format="%d 원"), "수량": st.column_config.NumberColumn(format="%d 개")}, use_container_width=True)
+                    st.dataframe(df_item_in[["No", "일자", "수량", "원화환산액", "총금액", "담당자", "요청자", "비고"]], use_container_width=True)
                 else:
                     st.info("입고 내역이 없습니다.")
 
             with c2:
                 st.markdown("#### 📤 출고 내역 리스트")
                 if not df_item_out.empty:
-                    st.dataframe(df_item_out[["일자", "수량", "단가", "원화환산액", "총금액", "요청자", "비고"]], column_config={"단가": st.column_config.NumberColumn(format="%,.2f"), "원화환산액": st.column_config.NumberColumn(format="%d 원"), "총금액": st.column_config.NumberColumn(format="%d 원"), "수량": st.column_config.NumberColumn(format="%d 개")}, use_container_width=True)
+                    st.dataframe(df_item_out[["No", "일자", "수량", "원화환산액", "총금액", "담당자", "요청자", "비고"]], use_container_width=True)
                 else:
                     st.info("출고 내역이 없습니다.")
 
@@ -1050,7 +1068,7 @@ elif menu == MENU_HISTORY:
             if st.button("🖨️ 브라우저 인쇄 / PDF 저장 (Print)"):
                 st.markdown("<script>window.print();</script>", unsafe_allow_html=True)
     else:
-        st.info("등록된 운영 입출고 이력이 없습니다.")
+        st.info("등록된 입출고 이력이 없습니다.")
 
 # ---------------------------------------------------------
 # 메뉴 5: 환율 설정
