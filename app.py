@@ -145,7 +145,8 @@ def render_a4_spec_card(item_code):
 
     unit_krw_display = int(round(representative_price * representative_rate))
 
-    trans_resp = db.supabase.table("stock_transactions").select("*").eq("item_code", item_code).order("trans_date", desc=True).limit(50).execute()
+    # A4 명세서에는 초기재고 제외하고 순수 운영 입출고 내역만 표시
+    trans_resp = db.supabase.table("stock_transactions").select("*").eq("item_code", item_code).neq("requester", "초기재고일괄등록").order("trans_date", desc=True).limit(50).execute()
     trans_data = trans_resp.data or []
     
     in_rows, out_rows = [], []
@@ -184,7 +185,6 @@ def render_a4_spec_card(item_code):
     .info-table { width: 100%; border-collapse: collapse; margin-bottom: 15px; }
     .info-table th, .info-table td { border: 1px solid #ccc; padding: 8px 12px; font-size: 14px; }
     .info-table th { background-color: #f4f4f4; font-weight: bold; width: 18%; text-align: center; }
-    /* 테이블 내부 텍스트 가운데 정렬 스타일 */
     table.dataframe th, table.dataframe td { text-align: center !important; }
     </style>
     """, unsafe_allow_html=True)
@@ -216,17 +216,17 @@ def render_a4_spec_card(item_code):
             st.markdown(html_table, unsafe_allow_html=True)
 
         st.markdown("---")
-        st.markdown("### 📥 1. 입고 내역")
+        st.markdown("### 📥 1. 운영 입고 내역")
         if not df_in.empty:
             st.markdown(df_in.to_html(index=False, classes="dataframe", justify="center"), unsafe_allow_html=True)
         else:
-            st.caption("※ 입고 내역이 없습니다.")
+            st.caption("※ 운영 입고 내역이 없습니다.")
 
-        st.markdown("### 📤 2. 출고 내역")
+        st.markdown("### 📤 2. 운영 출고 내역")
         if not df_out.empty:
             st.markdown(df_out.to_html(index=False, classes="dataframe", justify="center"), unsafe_allow_html=True)
         else:
-            st.caption("※ 출고 내역이 없습니다.")
+            st.caption("※ 운영 출고 내역이 없습니다.")
 
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -279,7 +279,7 @@ MENU_STOCK = "📊 재고 현황판"
 MENU_TRANS = "📝 입출고 등록"
 MENU_ITEMS = "🏷️ 품목 관리"
 MENU_HISTORY = "🔍 입출고 내역 조회"
-MENU_RATES = "⚙️ 환율 설정"
+MENU_RATES = "⚙️️ 환율 설정"
 
 menu_list = [MENU_STOCK, MENU_TRANS, MENU_ITEMS, MENU_HISTORY, MENU_RATES]
 if user.get("is_admin") == 1:
@@ -1019,13 +1019,13 @@ elif menu == MENU_HISTORY:
             st.markdown("---")
             st.markdown(f"### 📌 선택 품목 [{sel_item_code}] {sel_item_name} 상세 입출고 분석")
 
-            df_item_trans = df_trans_all[df_trans_all["품목코드"] == sel_item_code]
+            # [수정] 상세 분석 리스트에서는 '초기재고일괄등록' 건을 제외하여 순수 운영 내역만 표시
+            df_item_trans = df_trans_all[(df_trans_all["품목코드"] == sel_item_code) & (df_trans_all["요청자"] != "초기재고일괄등록")]
             df_item_in = df_item_trans[df_item_trans["구분"].str.contains("입고")]
             df_item_out = df_item_trans[df_item_trans["구분"].str.contains("출고")]
 
             col_in_m, col_out_m = st.columns(2)
             
-            # 숫자 파싱을 위한 보조 함수
             def parse_amt(val):
                 try:
                     return int(str(val).replace(" 원", "").replace(",", ""))
@@ -1040,18 +1040,18 @@ elif menu == MENU_HISTORY:
 
             c1, c2 = st.columns(2)
             with c1:
-                st.markdown("#### 📥 입고 내역 리스트")
+                st.markdown("#### 📥 운영 입고 내역 리스트")
                 if not df_item_in.empty:
                     st.dataframe(df_item_in[["No", "일자", "수량", "원화환산액", "총금액", "담당자", "요청자", "비고"]], use_container_width=True)
                 else:
-                    st.info("입고 내역이 없습니다.")
+                    st.info("운영 입고 내역이 없습니다.")
 
             with c2:
-                st.markdown("#### 📤 출고 내역 리스트")
+                st.markdown("#### 📤 운영 출고 내역 리스트")
                 if not df_item_out.empty:
                     st.dataframe(df_item_out[["No", "일자", "수량", "원화환산액", "총금액", "담당자", "요청자", "비고"]], use_container_width=True)
                 else:
-                    st.info("출고 내역이 없습니다.")
+                    st.info("운영 출고 내역이 없습니다.")
 
         st.markdown("---")
         col_down1, col_down2 = st.columns([2, 2])
