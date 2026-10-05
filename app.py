@@ -113,7 +113,6 @@ def render_a4_spec_card(item_code):
         return
     item = item_resp.data[0]
 
-    # 트랜잭션 데이터를 기반으로 현재 재고 완벽 집계 (입고 총합 - 출고 총합)
     trans_resp = db.supabase.table("stock_transactions").select("*").eq("item_code", item_code).order("trans_date", desc=False).execute()
     trans_data = trans_resp.data or []
     
@@ -315,8 +314,17 @@ if menu == MENU_STOCK:
 
     search_kw = st.text_input("🔍 통합 검색 (품목코드, 품명, 상세번호, 규격/모델, 비고 통합 검색)", "")
 
+    all_meta_resp = []
     try:
-        all_meta_resp = db.supabase.table("items").select("in_date, device_name, maker, category_main").limit(5000).execute().data or []
+        chunk_size = 1000
+        start = 0
+        while True:
+            resp = db.supabase.table("items").select("in_date, device_name, maker, category_main").range(start, start + chunk_size - 1).execute()
+            chunk_data = resp.data or []
+            all_meta_resp.extend(chunk_data)
+            if len(chunk_data) < chunk_size:
+                break
+            start += chunk_size
     except Exception:
         all_meta_resp = []
 
@@ -342,28 +350,38 @@ if menu == MENU_STOCK:
     except Exception:
         total_count = 1097
 
+    # 💡 [핵심 수정] items 전체를 1000건 제한 없이 페이징으로 완벽하게 수집
     try:
-        query = db.supabase.table("items").select("*")
-        
-        if search_kw.strip():
-            kw = search_kw.strip()
-            query = query.or_(f"item_code.ilike.%{kw}%,item_name.ilike.%{kw}%,item_detail_no.ilike.%{kw}%,model_spec.ilike.%{kw}%,remark.ilike.%{kw}%")
-            all_items = query.limit(5000).execute().data or []
-        else:
-            is_filtering = (
-                sel_in_date != "전체" or 
-                sel_stock_range != "전체" or 
-                sel_device != "전체" or 
-                sel_maker != "전체" or 
-                sel_cat_main != "전체"
-            )
+        all_items = []
+        is_filtering = (
+            sel_in_date != "전체" or 
+            sel_stock_range != "전체" or 
+            sel_device != "전체" or 
+            sel_maker != "전체" or 
+            sel_cat_main != "전체"
+        )
 
-            if is_filtering:
-                all_items = query.limit(5000).execute().data or []
+        chunk_size = 1000
+        start = 0
+        while True:
+            sub_query = db.supabase.table("items").select("*")
+            if search_kw.strip():
+                kw = search_kw.strip()
+                sub_query = sub_query.or_(f"item_code.ilike.%{kw}%,item_name.ilike.%{kw}%,item_detail_no.ilike.%{kw}%,model_spec.ilike.%{kw}%,remark.ilike.%{kw}%")
+            
+            resp = sub_query.range(start, start + chunk_size - 1).execute()
+            chunk_data = resp.data or []
+            all_items.extend(chunk_data)
+            
+            if search_kw.strip() or is_filtering:
+                if len(chunk_data) < chunk_size:
+                    break
+                start += chunk_size
             else:
+                # 검색이나 필터가 없을 때는 기본 페이징 처리 (100개씩 보기) 구조 유지
                 PAGE_SIZE_STOCK = 100
                 total_stock_pages = max(1, math.ceil(total_count / PAGE_SIZE_STOCK))
-
+                
                 col_p1, _ = st.columns([1, 4])
                 with col_p1:
                     current_stock_page = st.selectbox("📄 페이지 선택 (100건씩)", list(range(1, total_stock_pages + 1)), format_func=lambda x: f"{x} 페이지 (총 {total_stock_pages}페이지)")
@@ -371,14 +389,24 @@ if menu == MENU_STOCK:
                 start_idx = (current_stock_page - 1) * PAGE_SIZE_STOCK
                 end_idx = start_idx + PAGE_SIZE_STOCK - 1
                 
-                items_resp = query.range(start_idx, end_idx).execute()
+                items_resp = db.supabase.table("items").select("*").range(start_idx, end_idx).execute()
                 all_items = items_resp.data or []
+                break
     except Exception:
         all_items = []
 
-    # 💡 [핵심] stock_transactions 장부 데이터만으로 재고 완벽 집계 (입고 합계 - 출고 합계)
+    # 💡 [핵심 수정] stock_transactions 전체 데이터를 1000건 제한 없이 페이징으로 완벽 수집
+    all_trans_resp = []
     try:
-        all_trans_resp = db.supabase.table("stock_transactions").select("item_code, trans_type, quantity").limit(50000).execute().data or []
+        chunk_size = 1000
+        start = 0
+        while True:
+            resp = db.supabase.table("stock_transactions").select("item_code, trans_type, quantity").range(start, start + chunk_size - 1).execute()
+            chunk_data = resp.data or []
+            all_trans_resp.extend(chunk_data)
+            if len(chunk_data) < chunk_size:
+                break
+            start += chunk_size
     except Exception:
         all_trans_resp = []
 
@@ -659,7 +687,7 @@ elif menu == MENU_TRANS:
             render_a4_spec_card(item_code)
 
     with tab_t2:
-        st.markdown("#### ✏️ 기존 입출고 트랜잭션 내역 수정 및 삭제")
+        st.markdown("#### ✏️️ 기존 입출고 트랜잭션 내역 수정 및 삭제")
         col_ed1, col_ed2, col_ed3 = st.columns([2, 1, 1])
         edit_trans_kw = col_ed1.text_input("🔍 내역 검색 (품목코드, 요청자, 담당자, 비고)", "", key="edit_trans_search")
         edit_start_date = col_ed2.date_input("조회 시작일", value=datetime.date.today() - datetime.timedelta(days=180), key="edit_start")
@@ -751,7 +779,7 @@ elif menu == MENU_TRANS:
 # ---------------------------------------------------------
 elif menu == MENU_ITEMS:
     st.subheader("🏷️ 품목 등록 및 수정 관리")
-    tab1, tab2, tab3 = st.tabs(["✍️ 개별 직접 등록", "✏️️ 기존 품목 수정", "📂 기초 데이터 엑셀 일괄 등록"])
+    tab1, tab2, tab3 = st.tabs(["✍️ 개별 직접 등록", "✏️ 기존 품목 수정", "📂 기초 데이터 엑셀 일괄 등록"])
 
     with tab1:
         with st.form("new_item_form", clear_on_submit=True):
