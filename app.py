@@ -107,84 +107,6 @@ def get_exchange_rate_by_year(currency, year):
         return currency_rates[0]
     return 1.0
 
-def render_html_transaction_table(rows_data):
-    if not rows_data:
-        return "<p style='color: gray; font-size: 13px; text-align: center; padding: 10px;'>※ 내역이 없습니다.</p>"
-    
-    html_code = """
-    <style>
-    .erp-trans-table {
-        width: 100%;
-        border-collapse: collapse;
-        margin-top: 5px;
-        margin-bottom: 15px;
-        background-color: #ffffff;
-        font-size: 14px;
-        table-layout: fixed;
-    }
-    .erp-trans-table th, .erp-trans-table td {
-        border: 1px solid #e0e0e0;
-        padding: 10px 12px;
-        word-break: break-all;
-    }
-    .erp-trans-table th:nth-child(1), .erp-trans-table td:nth-child(1) { width: 5%; text-align: center; }  /* No */
-    .erp-trans-table th:nth-child(2), .erp-trans-table td:nth-child(2) { width: 12%; text-align: center; } /* 일자 */
-    .erp-trans-table th:nth-child(3), .erp-trans-table td:nth-child(3) { width: 9%; text-align: center; }  /* 구분 */
-    .erp-trans-table th:nth-child(4), .erp-trans-table td:nth-child(4) { width: 9%; text-align: center; }  /* 수량 */
-    .erp-trans-table th:nth-child(5), .erp-trans-table td:nth-child(5) { width: 13%; text-align: center; } /* 원화환산액 */
-    .erp-trans-table th:nth-child(6), .erp-trans-table td:nth-child(6) { width: 13%; text-align: center; } /* 총금액 */
-    .erp-trans-table th:nth-child(7), .erp-trans-table td:nth-child(7) { width: 11%; text-align: center; } /* 담당자 */
-    .erp-trans-table th:nth-child(8), .erp-trans-table td:nth-child(8) { width: 11%; text-align: center; } /* 요청자 */
-    .erp-trans-table th:nth-child(9), .erp-trans-table td:nth-child(9) { width: 17%; text-align: left; }   /* 비고 */
-
-    .erp-trans-table th {
-        background-color: #f8f9fa;
-        color: #333333;
-        font-weight: bold;
-        text-align: center !important;
-    }
-    .badge-in { background-color: #E8F5E9; color: #2E7D32; padding: 3px 8px; border-radius: 4px; font-weight: bold; display: inline-block; }
-    .badge-out { background-color: #FFEBEE; color: #C62828; padding: 3px 8px; border-radius: 4px; font-weight: bold; display: inline-block; }
-    </style>
-    <table class="erp-trans-table">
-        <thead>
-            <tr>
-                <th>No</th>
-                <th>일자</th>
-                <th>구분</th>
-                <th>수량</th>
-                <th>원화환산액</th>
-                <th>총금액</th>
-                <th>담당자</th>
-                <th>요청자</th>
-                <th>비고</th>
-            </tr>
-        </thead>
-        <tbody>
-    """
-    for r in rows_data:
-        type_str = str(r.get('구분', ''))
-        if "입고" in type_str or "IN" in type_str:
-            badge = f'<span class="badge-in">{type_str}</span>'
-        else:
-            badge = f'<span class="badge-out">{type_str}</span>'
-
-        html_code += f"""
-            <tr>
-                <td style="text-align: center;">{r['No']}</td>
-                <td style="text-align: center;">{r['일자']}</td>
-                <td style="text-align: center;">{badge}</td>
-                <td style="text-align: center;">{r['수량']}</td>
-                <td style="text-align: center;">{r['원화환산액']}</td>
-                <td style="text-align: center;">{r['총금액']}</td>
-                <td style="text-align: center;">{r['담당자']}</td>
-                <td style="text-align: center;">{r['요청자']}</td>
-                <td style="text-align: left;">{r['비고']}</td>
-            </tr>
-        """
-    html_code += "</tbody></table>"
-    return html_code
-
 def render_a4_spec_card(item_code):
     item_resp = db.supabase.table("items").select("*").eq("item_code", item_code).execute()
     if not item_resp.data:
@@ -272,6 +194,8 @@ def render_a4_spec_card(item_code):
             out_rows.append(row_dict)
             out_idx += 1
 
+    df_in = pd.DataFrame(in_rows)
+    df_out = pd.DataFrame(out_rows)
     category_full = f"{safe_str_clean(item.get('category_main'))} - {safe_str_clean(item.get('category_sub'))} - 선반:{safe_str_clean(item.get('shelf_no'))}"
 
     st.markdown("""
@@ -312,10 +236,16 @@ def render_a4_spec_card(item_code):
 
         st.markdown("---")
         st.markdown("### 📥 1. 입고 내역 (오름차순 정렬)")
-        st.markdown(render_html_transaction_table(in_rows), unsafe_allow_html=True)
+        if not df_in.empty:
+            st.dataframe(df_in, column_config={"No": st.column_config.NumberColumn("No", width="small", format="%d")}, use_container_width=True, hide_index=True)
+        else:
+            st.caption("※ 입고 내역이 없습니다.")
 
         st.markdown("### 📤 2. 출고 내역 (오름차순 정렬)")
-        st.markdown(render_html_transaction_table(out_rows), unsafe_allow_html=True)
+        if not df_out.empty:
+            st.dataframe(df_out, column_config={"No": st.column_config.NumberColumn("No", width="small", format="%d")}, use_container_width=True, hide_index=True)
+        else:
+            st.caption("※ 출고 내역이 없습니다.")
 
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -622,12 +552,12 @@ if menu == MENU_STOCK:
         st.info("조건에 일치하는 품목 데이터가 없습니다.")
 
 # ---------------------------------------------------------
-# 메뉴 2: 입출고 등록 (팝업 확인 및 라디오 버튼 레이아웃 개선)
+# 메뉴 2: 입출고 등록
 # ---------------------------------------------------------
 elif menu == MENU_TRANS:
     st.subheader("📝 자재 입출고 등록 및 이력 관리 (FIFO 선입선출)")
 
-    tab_t1, tab_t2 = st.tabs(["✍️ 신규 입출고 등록", "✏️️ 기존 입출고 내역 수정 및 삭제"])
+    tab_t1, tab_t2 = st.tabs(["✍️ 신규 입출고 등록", "✏️ 기존 입출고 내역 수정 및 삭제"])
 
     with tab_t1:
         search_kw_trans = st.text_input("🔍 대상 품목 통합 검색 (품명, 코드, 상세번호, 규격, 비고 등)", "", key="trans_search_box")
@@ -693,7 +623,7 @@ elif menu == MENU_TRANS:
                         }
                         st.session_state.show_confirm_dialog = True
 
-            @st.dialog("⚠️ 최종 입출고 실행 확인")
+            @st.dialog("⚠️️ 최종 입출고 실행 확인")
             def confirm_trans_dialog():
                 data = st.session_state.trans_form_data
                 if not data:
@@ -755,10 +685,9 @@ elif menu == MENU_TRANS:
             render_a4_spec_card(item_code)
 
     with tab_t2:
-        st.markdown("#### ✏️️ 기존 입출고 트랜잭션 내역 수정 및 삭제")
+        st.markdown("#### ✏️ 기존 입출고 트랜잭션 내역 수정 및 삭제")
         st.caption("💡 수정 또는 삭제할 입출고 내역을 검색하거나 날짜로 조회하여 선택하세요.")
 
-        # 수정/삭제 페이지 내 기간 검색 추가
         col_ed1, col_ed2, col_ed3 = st.columns([2, 1, 1])
         edit_trans_kw = col_ed1.text_input("🔍 내역 검색 (품목코드, 요청자, 담당자, 비고)", "", key="edit_trans_search")
         edit_start_date = col_ed2.date_input("조회 시작일", value=datetime.date.today() - datetime.timedelta(days=180), key="edit_start")
@@ -1163,7 +1092,7 @@ elif menu == MENU_ITEMS:
                     st.error(f"기초 데이터 초고속 업로드 처리 중 오류 발생: {e}")
 
 # ---------------------------------------------------------
-# 메뉴 4: 입출고 내역 조회 (기간 필터 및 품명 매핑 강화)
+# 메뉴 4: 입출고 내역 조회 (Streamlit 네이티브 표 적용)
 # ---------------------------------------------------------
 elif menu == MENU_HISTORY:
     st.subheader("🔍 입출고 통합 이력 조회 및 분석")
@@ -1288,7 +1217,34 @@ elif menu == MENU_HISTORY:
         h_end = h_start + PAGE_SIZE_HIST
         df_trans_page = df_trans_all.iloc[h_start:h_end]
 
-        st.markdown(render_html_transaction_table(df_trans_page.to_dict("records")), unsafe_allow_html=True)
+        def highlight_trans_type(row):
+            val = str(row.get("구분", ""))
+            if "입고" in val or "IN" in val:
+                return ['background-color: #E8F5E9; color: #1B5E20; font-weight: bold;'] * len(row)
+            elif "출고" in val or "OUT" in val:
+                return ['background-color: #FFEBEE; color: #B71C1C; font-weight: bold;'] * len(row)
+            return [''] * len(row)
+
+        styled_trans_df = df_trans_page.style.apply(highlight_trans_type, axis=1)
+
+        st.dataframe(
+            styled_trans_df,
+            column_config={
+                "No": st.column_config.NumberColumn("No", width="small", format="%d"),
+                "일자": st.column_config.TextColumn("일자", width="medium"),
+                "구분": st.column_config.TextColumn("구분", width="small"),
+                "품목코드": st.column_config.TextColumn("품목코드", width="medium"),
+                "품명": st.column_config.TextColumn("품명", width="large"),
+                "수량": st.column_config.TextColumn("수량", width="small"),
+                "원화환산액": st.column_config.TextColumn("원화환산액", width="medium"),
+                "총금액": st.column_config.TextColumn("총금액", width="medium"),
+                "담당자": st.column_config.TextColumn("담당자", width="small"),
+                "요청자": st.column_config.TextColumn("요청자", width="small"),
+                "비고": st.column_config.TextColumn("비고", width="large")
+            },
+            use_container_width=True,
+            hide_index=True
+        )
 
         st.markdown("---")
         col_down1, col_down2 = st.columns([2, 2])
