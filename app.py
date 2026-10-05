@@ -376,7 +376,7 @@ if menu == MENU_STOCK:
     except Exception:
         all_items = []
 
-    # stock_transactions 데이터를 기반으로 모든 품목의 현재고를 완벽하게 계산
+    # 💡 [핵심] stock_lots를 완전히 배제하고 오직 stock_transactions(장부)만을 기준으로 현재고 완벽 집계
     try:
         all_trans_resp = db.supabase.table("stock_transactions").select("item_code, trans_type, quantity").limit(50000).execute().data or []
     except Exception:
@@ -396,16 +396,6 @@ if menu == MENU_STOCK:
         elif ttype in ["OUT", "출고"]:
             item_calc_stock_map[ic] -= q
 
-    lots_data = db.get_stock_by_lots() or []
-    lot_map = {}
-    for lot in lots_data:
-        icode = lot.get("item_code")
-        if not icode:
-            continue
-        if icode not in lot_map:
-            lot_map[icode] = []
-        lot_map[icode].append(lot)
-
     table_rows = []
     for item in all_items:
         icode = item.get("item_code")
@@ -423,68 +413,35 @@ if menu == MENU_STOCK:
         detail_no = safe_str_clean(item.get("item_detail_no"))
         iname = safe_str_clean(item.get("item_name"))
 
-        # 트랜잭션 집계 수량을 현재고로 설정 (마이너스 방지 및 완벽 반영)
+        # 트랜잭션 집계 수량을 현재고로 반영
         calc_qty = max(0, item_calc_stock_map.get(icode, 0))
-        item_lots = lot_map.get(icode, [])
         
-        if item_lots:
-            for lot in item_lots:
-                price = safe_float(lot.get("unit_price"), base_price)
-                in_date = lot.get("inbound_date", base_in_date)
-                
-                year = get_year_from_date(in_date)
-                rate = get_exchange_rate_by_year(curr, year)
-                unit_krw = round(price * rate)
-                stock_amt = round(unit_krw * calc_qty)
+        year = get_year_from_date(base_in_date)
+        rate = get_exchange_rate_by_year(curr, year)
+        unit_krw = round(base_price * rate)
+        stock_amt = round(unit_krw * calc_qty)
 
-                table_rows.append({
-                    "사진": item.get("photo_url"),
-                    "Lot ID": lot.get("lot_id", "-"),
-                    "품목코드": icode,
-                    "품명": iname,
-                    "상세번호": detail_no,
-                    "규격/모델": model_spec,
-                    "구분": category_type,
-                    "분류체계": category_full,
-                    "대분류": category_main,
-                    "구역": safe_str_clean(item.get("zone")),
-                    "기기명": device_name,
-                    "Maker": maker,
-                    "입고일": in_date,
-                    "현재재고": calc_qty,
-                    "화폐단위": curr,
-                    "단가": price,
-                    "원화환산액": unit_krw,
-                    "재고금액": stock_amt,
-                    "비고": remark
-                })
-        else:
-            year = get_year_from_date(base_in_date)
-            rate = get_exchange_rate_by_year(curr, year)
-            unit_krw = round(base_price * rate)
-            stock_amt = round(unit_krw * calc_qty)
-
-            table_rows.append({
-                "사진": item.get("photo_url"),
-                "Lot ID": "-",
-                "품목코드": icode,
-                "품명": iname,
-                "상세번호": detail_no,
-                "규격/모델": model_spec,
-                "구분": category_type,
-                "분류체계": category_full,
-                "대분류": category_main,
-                "구역": safe_str_clean(item.get("zone")),
-                "기기명": device_name,
-                "Maker": maker,
-                "입고일": base_in_date,
-                "현재재고": calc_qty,
-                "화폐단위": curr,
-                "단가": base_price,
-                "원화환산액": unit_krw,
-                "재고금액": stock_amt,
-                "비고": remark
-            })
+        table_rows.append({
+            "사진": item.get("photo_url"),
+            "Lot ID": "-",
+            "품목코드": icode,
+            "품명": iname,
+            "상세번호": detail_no,
+            "규격/모델": model_spec,
+            "구분": category_type,
+            "분류체계": category_full,
+            "대분류": category_main,
+            "구역": safe_str_clean(item.get("zone")),
+            "기기명": device_name,
+            "Maker": maker,
+            "입고일": base_in_date,
+            "현재재고": calc_qty,
+            "화폐단위": curr,
+            "단가": base_price,
+            "원화환산액": unit_krw,
+            "재고금액": stock_amt,
+            "비고": remark
+        })
 
     if table_rows:
         df_stock = pd.DataFrame(table_rows)
