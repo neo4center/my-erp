@@ -775,8 +775,8 @@ elif menu == MENU_TRANS:
 # 메뉴 3: 품목 관리
 # ---------------------------------------------------------
 elif menu == MENU_ITEMS:
-    st.subheader("🏷️️ 품목 등록 및 수정 관리")
-    tab1, tab2, tab3 = st.tabs(["✍️️ 개별 직접 등록", "✏️ 기존 품목 수정", "📂 기초 데이터 엑셀 일괄 등록"])
+    st.subheader("🏷️ 품목 등록 및 수정 관리")
+    tab1, tab2, tab3 = st.tabs(["✍️ 개별 직접 등록", "✏️ 기존 품목 수정", "📂 기초 데이터 엑셀 일괄 등록"])
 
     with tab1:
         with st.form("new_item_form", clear_on_submit=True):
@@ -969,11 +969,11 @@ elif menu == MENU_ITEMS:
                     st.error(f"오류 발생: {e}")
 
 # ---------------------------------------------------------
-# 메뉴 4: 입출고 내역 조회 (완벽한 품명 매핑 및 금액 계산 복구)
+# 메뉴 4: 입출고 내역 조회 (기초재고 세팅 제외, 운영 내역만 표시)
 # ---------------------------------------------------------
 elif menu == MENU_HISTORY:
     st.subheader("🔍 입출고 통합 이력 조회 및 분석")
-    st.caption("💡 운영 입출고 내역을 검색하고 기간별로 조회할 수 있습니다.")
+    st.caption("💡 앱 운영 과정에서 발생한 실시간 입출고 내역만 조회됩니다.")
 
     col_f1, col_f2, col_f3 = st.columns([2, 1, 1])
     hist_search = col_f1.text_input("🔍 검색어 입력 (품목코드, 품명, 요청자, 비고 등)", "")
@@ -981,7 +981,13 @@ elif menu == MENU_HISTORY:
     end_date_filter = col_f3.date_input("조회 종료일", value=datetime.date.today())
 
     try:
-        h_query = db.supabase.table("stock_transactions").select("*").neq("requester", "-").order("trans_date", desc=True)
+        # 기초재고 일괄 등록 건(requester가 '-' 이거나 초기등록 관련)은 제외하고 운영 내역만 가져옴
+        h_query = db.supabase.table("stock_transactions").select("*") \
+            .neq("requester", "-") \
+            .neq("requester", "초기재고일괄등록") \
+            .neq("requester", "시스템입고") \
+            .order("trans_date", desc=True)
+        
         trans_data = h_query.limit(5000).execute().data or []
     except Exception:
         trans_data = []
@@ -1141,3 +1147,4 @@ elif menu == "👥 사용자 관리 (관리자)":
     resp = db.supabase.table("users").select("emp_no, name, position, is_admin, created_at").execute()
     if resp.data:
         st.dataframe(pd.DataFrame(resp.data).rename(columns={"emp_no": "사번", "name": "이름", "position": "직급", "is_admin": "관리자권한", "created_at": "등록일시"}), use_container_width=True)
+        
