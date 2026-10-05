@@ -587,9 +587,43 @@ elif menu == MENU_TRANS:
                 st.session_state.trans_form_data = {}
 
             with st.form("trans_form"):
-                st.markdown("#### 📌 입출고 구분 선택 (*실수 방지 강조)")
+                st.markdown("#### 📌 입출고 구분 선택")
+                
+                # 입고 / 출고 라디오 버튼 영역 시인성 강화 CSS 및 박스 디자인 적용
+                st.markdown("""
+                <style>
+                /* 입출고 라디오 버튼 감싸는 컨테이너 스타일링 */
+                div.row-widget.stRadio > div {
+                    display: flex;
+                    gap: 20px;
+                }
+                div.row-widget.stRadio > div > label:nth-child(1) {
+                    background-color: #E8F5E9;
+                    border: 2px solid #81C784;
+                    padding: 10px 20px;
+                    border-radius: 8px;
+                    font-weight: bold;
+                    color: #1B5E20;
+                    flex: 1;
+                    text-align: center;
+                    cursor: pointer;
+                }
+                div.row-widget.stRadio > div > label:nth-child(2) {
+                    background-color: #FFEBEE;
+                    border: 2px solid #E57373;
+                    padding: 10px 20px;
+                    border-radius: 8px;
+                    font-weight: bold;
+                    color: #B71C1C;
+                    flex: 1;
+                    text-align: center;
+                    cursor: pointer;
+                }
+                </style>
+                """, unsafe_allow_html=True)
+
                 col1, col2 = st.columns(2)
-                trans_type = col1.radio("입출고 구분", ["입고", "출고"], horizontal=True)
+                trans_type = col1.radio("입출고 구분", ["📥 입고 (IN)", "📤 출고 (OUT)"], horizontal=True)
                 trans_date = col2.date_input("일자", datetime.date.today())
 
                 col3, col4 = st.columns(2)
@@ -608,11 +642,12 @@ elif menu == MENU_TRANS:
                     if not requester:
                         st.error("요청자는 필수 입력 항목입니다.")
                     else:
+                        parsed_type = "입고" if "입고" in trans_type else "출고"
                         st.session_state.trans_form_data = {
                             "item_code": item_code,
                             "item_name": target_item["item_name"],
                             "category": target_item.get("category_type", "일반"),
-                            "trans_type": trans_type,
+                            "trans_type": parsed_type,
                             "trans_date": str(trans_date),
                             "quantity": quantity,
                             "unit_price": unit_price,
@@ -1151,7 +1186,6 @@ elif menu == MENU_HISTORY:
         icode = str(t.get("item_code", "-")).strip()
         iname = item_info_map.get(icode.upper(), "-")
         
-        # 만약 맵에서 못 찾았다면 단건 조회를 통해 보완
         if iname == "-" or not iname:
             try:
                 res = db.supabase.table("items").select("item_name").eq("item_code", icode).execute()
@@ -1188,7 +1222,6 @@ elif menu == MENU_HISTORY:
                 except:
                     pass
 
-            # 환율 계산을 위한 통화 정보 조회
             try:
                 curr_res = db.supabase.table("items").select("currency").eq("item_code", icode).execute()
                 curr = safe_str_clean(curr_res.data[0].get("currency"), "KRW") if curr_res.data else "KRW"
@@ -1240,7 +1273,6 @@ elif menu == MENU_HISTORY:
 
         styled_trans_df = df_trans_all.style.apply(highlight_trans_type, axis=1)
 
-        # 컬럼 폭 최적화 설정 적용 (한 페이지에 깔끔하게 맞도록 폭 배분)
         st.dataframe(
             styled_trans_df,
             column_config={
