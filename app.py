@@ -622,12 +622,12 @@ if menu == MENU_STOCK:
         st.info("조건에 일치하는 품목 데이터가 없습니다.")
 
 # ---------------------------------------------------------
-# 메뉴 2: 입출고 등록 (팝업 확인 기능 포함)
+# 메뉴 2: 입출고 등록 (팝업 확인 및 라디오 버튼 레이아웃 개선)
 # ---------------------------------------------------------
 elif menu == MENU_TRANS:
     st.subheader("📝 자재 입출고 등록 및 이력 관리 (FIFO 선입선출)")
 
-    tab_t1, tab_t2 = st.tabs(["✍️ 신규 입출고 등록", "✏️ 기존 입출고 내역 수정 및 삭제"])
+    tab_t1, tab_t2 = st.tabs(["✍️ 신규 입출고 등록", "✏️️ 기존 입출고 내역 수정 및 삭제"])
 
     with tab_t1:
         search_kw_trans = st.text_input("🔍 대상 품목 통합 검색 (품명, 코드, 상세번호, 규격, 비고 등)", "", key="trans_search_box")
@@ -653,20 +653,13 @@ elif menu == MENU_TRANS:
             target_item = item_opts[selected_label]
             item_code = target_item["item_code"]
 
-            # 세션 상태에 데이터 임시 저장용 딕셔너리 초기화
             if "trans_form_data" not in st.session_state:
                 st.session_state.trans_form_data = {}
 
             with st.form("trans_form"):
-                st.markdown("""
-                <style>
-                .trans-type-box { background-color: #f1f3f5; padding: 10px 15px; border-radius: 6px; border: 1px solid #ced4da; margin-bottom: 10px; }
-                </style>
-                """, unsafe_allow_html=True)
-
-                st.markdown("<div class='trans-type-box'><b>📌 입출고 구분 선택 (*실수 방지 강조)</b></div>", unsafe_allow_html=True)
+                st.markdown("#### 📌 입출고 구분 선택 (*실수 방지 강조)")
                 col1, col2 = st.columns(2)
-                trans_type = col1.radio("입출고 구분", ["입고", "출고"], horizontal=True, label_visibility="collapsed")
+                trans_type = col1.radio("입출고 구분", ["입고", "출고"], horizontal=True)
                 trans_date = col2.date_input("일자", datetime.date.today())
 
                 col3, col4 = st.columns(2)
@@ -700,7 +693,6 @@ elif menu == MENU_TRANS:
                         }
                         st.session_state.show_confirm_dialog = True
 
-            # 팝업 확인 다이얼로그 정의
             @st.dialog("⚠️ 최종 입출고 실행 확인")
             def confirm_trans_dialog():
                 data = st.session_state.trans_form_data
@@ -763,28 +755,50 @@ elif menu == MENU_TRANS:
             render_a4_spec_card(item_code)
 
     with tab_t2:
-        st.markdown("#### ✏️ 기존 입출고 트랜잭션 내역 수정 및 삭제")
-        st.caption("💡 수정 또는 삭제할 입출고 내역을 검색하여 선택하세요.")
+        st.markdown("#### ✏️️ 기존 입출고 트랜잭션 내역 수정 및 삭제")
+        st.caption("💡 수정 또는 삭제할 입출고 내역을 검색하거나 날짜로 조회하여 선택하세요.")
 
-        edit_trans_kw = st.text_input("🔍 내역 검색 (품목코드, 요청자, 담당자, 비고)", "", key="edit_trans_search")
+        # 수정/삭제 페이지 내 기간 검색 추가
+        col_ed1, col_ed2, col_ed3 = st.columns([2, 1, 1])
+        edit_trans_kw = col_ed1.text_input("🔍 내역 검색 (품목코드, 요청자, 담당자, 비고)", "", key="edit_trans_search")
+        edit_start_date = col_ed2.date_input("조회 시작일", value=datetime.date.today() - datetime.timedelta(days=180), key="edit_start")
+        edit_end_date = col_ed3.date_input("조회 종료일", value=datetime.date.today(), key="edit_end")
+
         try:
-            et_query = db.supabase.table("stock_transactions").select("*").neq("requester", "초기재고일괄등록").neq("requester", "시스템입고").order("trans_date", desc=False)
-            all_trans_list = et_query.limit(200).execute().data or []
+            et_query = db.supabase.table("stock_transactions").select("*").neq("requester", "초기재고일괄등록").neq("requester", "시스템입고").neq("requester", "-").order("trans_date", desc=False)
+            all_trans_list = et_query.limit(500).execute().data or []
         except Exception:
             all_trans_list = []
 
-        if edit_trans_kw.strip():
-            ekw = edit_trans_kw.strip().lower()
-            all_trans_list = [t for t in all_trans_list if ekw in str(t.get("item_code","")).lower() or ekw in str(t.get("requester","")).lower() or ekw in str(t.get("manager","")).lower() or ekw in str(t.get("remark","")).lower()]
+        filtered_edit_list = []
+        for t in all_trans_list:
+            t_date_str = str(t.get("trans_date", "")).split(" ")[0]
+            try:
+                t_dt = datetime.datetime.strptime(t_date_str, "%Y-%m-%d").date()
+            except:
+                t_dt = datetime.date.today()
 
-        if all_trans_list:
-            trans_opts = {f"[ID:{t.get('id')}] {t.get('trans_date')} | 코드:{t.get('item_code')} | 구분:{t.get('trans_type')} | 수량:{t.get('quantity')}개 | 요청자:{t.get('requester')}": t for t in all_trans_list}
+            if not (edit_start_date <= t_dt <= edit_end_date):
+                continue
+
+            if edit_trans_kw.strip():
+                ekw = edit_trans_kw.strip().lower()
+                matched = ekw in str(t.get("item_code","")).lower() or ekw in str(t.get("requester","")).lower() or ekw in str(t.get("manager","")).lower() or ekw in str(t.get("remark","")).lower()
+                if not matched:
+                    continue
+            filtered_edit_list.append(t)
+
+        if filtered_edit_list:
+            trans_opts = {f"[ID:{t.get('id')}] {t.get('trans_date')} | 코드:{t.get('item_code')} | 구분:{t.get('trans_type')} | 수량:{t.get('quantity')}개 | 요청자:{t.get('requester')}": t for t in filtered_edit_list}
             sel_trans_label = st.selectbox("수정/삭제할 내역 선택:", list(trans_opts.keys()))
             target_t = trans_opts[sel_trans_label]
 
             with st.form("edit_trans_form"):
                 col1, col2 = st.columns(2)
-                e_type = col1.selectbox("입출고 구분", ["IN", "OUT"], index=0 if target_t.get("trans_type") in ["IN", "입고"] else 1)
+                current_t_type = target_t.get("trans_type", "IN")
+                default_radio_idx = 0 if current_t_type in ["IN", "입고"] else 1
+                
+                e_type_radio = col1.radio("입출고 구분", ["입고", "출고"], index=default_radio_idx, horizontal=True)
                 
                 try:
                     default_d = datetime.datetime.strptime(str(target_t.get("trans_date", "")).split(" ")[0], "%Y-%m-%d").date()
@@ -807,11 +821,12 @@ elif menu == MENU_TRANS:
                 submitted_delete = col_btn2.form_submit_button("🗑️ 해당 내역 삭제")
 
                 if submitted_update:
+                    save_type_code = "IN" if e_type_radio == "입고" else "OUT"
                     with st.spinner("⏳ 입출고 내역 수정 중..."):
                         db.update_transaction(
                             trans_id=target_t.get("id"),
                             item_code=target_t.get("item_code"),
-                            trans_type=e_type,
+                            trans_type=save_type_code,
                             trans_date=str(e_date),
                             quantity=e_qty,
                             unit_price=e_price,
@@ -828,7 +843,7 @@ elif menu == MENU_TRANS:
                         st.success("✅ 선택한 입출고 내역이 삭제되었습니다!")
                         st.rerun()
         else:
-            st.info("검색 조건에 일치하는 입출고 내역이 없습니다.")
+            st.info("선택한 기간 또는 검색 조건에 일치하는 입출고 내역이 없습니다.")
 
 # ---------------------------------------------------------
 # 메뉴 3: 품목 관리
@@ -1171,7 +1186,6 @@ elif menu == MENU_HISTORY:
             except Exception as e:
                 st.error(f"조회 중 오류 발생: {e}")
 
-    # 검색 및 기간 필터 영역
     col_f1, col_f2, col_f3 = st.columns([2, 1, 1])
     hist_search = col_f1.text_input("🔍 운영 입출고 내역 검색 (품목코드, 품명, 요청자, 담당자, 비고 등)", "")
     
@@ -1187,11 +1201,9 @@ elif menu == MENU_HISTORY:
     except Exception:
         trans_data = []
 
-    # 품목 마스터 맵핑용 가져오기
     items_resp = db.supabase.table("items").select("item_code, item_name, currency").limit(5000).execute()
     item_info_map = {i["item_code"]: i for i in (items_resp.data or [])}
 
-    # 날짜 필터링 및 검색어 필터링 적용
     filtered_trans_data = []
     for t in trans_data:
         t_date_str = str(t.get("trans_date", "")).split(" ")[0]
