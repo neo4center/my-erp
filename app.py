@@ -113,7 +113,7 @@ def render_a4_spec_card(item_code):
         return
     item = item_resp.data[0]
 
-    # 트랜잭션 내역을 기반으로 현재 재고를 정확하게 산정 (입고 총합 - 출고 총합)
+    # 트랜잭션 데이터를 기반으로 현재 재고를 완벽하게 집계 (입고 총합 - 출고 총합)
     trans_resp = db.supabase.table("stock_transactions").select("*").eq("item_code", item_code).order("trans_date", desc=False).execute()
     trans_data = trans_resp.data or []
     
@@ -376,7 +376,7 @@ if menu == MENU_STOCK:
     except Exception:
         all_items = []
 
-    # stock_lots 외에 stock_transactions 데이터를 함께 집계하여 완벽한 재고 수량 계산
+    # stock_transactions 데이터를 기반으로 모든 품목의 현재고를 정확하게 계산
     try:
         all_trans_resp = db.supabase.table("stock_transactions").select("item_code, trans_type, quantity").limit(50000).execute().data or []
     except Exception:
@@ -424,21 +424,17 @@ if menu == MENU_STOCK:
         iname = safe_str_clean(item.get("item_name"))
 
         item_lots = lot_map.get(icode, [])
+        calc_qty = max(0, item_calc_stock_map.get(icode, 0))
         
         if item_lots:
             for lot in item_lots:
-                # Lot별 수량 또는 트랜잭션 집계 수량 반영
-                qty = safe_int_clean(lot.get("current_qty"), 0)
-                if icode in item_calc_stock_map:
-                    qty = max(0, item_calc_stock_map[icode])
-                
                 price = safe_float(lot.get("unit_price"), base_price)
                 in_date = lot.get("inbound_date", base_in_date)
                 
                 year = get_year_from_date(in_date)
                 rate = get_exchange_rate_by_year(curr, year)
                 unit_krw = round(price * rate)
-                stock_amt = round(unit_krw * qty)
+                stock_amt = round(unit_krw * calc_qty)
 
                 table_rows.append({
                     "사진": item.get("photo_url"),
@@ -454,7 +450,7 @@ if menu == MENU_STOCK:
                     "기기명": device_name,
                     "Maker": maker,
                     "입고일": in_date,
-                    "현재재고": qty,
+                    "현재재고": calc_qty,
                     "화폐단위": curr,
                     "단가": price,
                     "원화환산액": unit_krw,
@@ -462,11 +458,10 @@ if menu == MENU_STOCK:
                     "비고": remark
                 })
         else:
-            qty = max(0, item_calc_stock_map.get(icode, 0))
             year = get_year_from_date(base_in_date)
             rate = get_exchange_rate_by_year(curr, year)
             unit_krw = round(base_price * rate)
-            stock_amt = round(unit_krw * qty)
+            stock_amt = round(unit_krw * calc_qty)
 
             table_rows.append({
                 "사진": item.get("photo_url"),
@@ -482,7 +477,7 @@ if menu == MENU_STOCK:
                 "기기명": device_name,
                 "Maker": maker,
                 "입고일": base_in_date,
-                "현재재고": qty,
+                "현재재고": calc_qty,
                 "화폐단위": curr,
                 "단가": base_price,
                 "원화환산액": unit_krw,
@@ -725,7 +720,7 @@ elif menu == MENU_TRANS:
             render_a4_spec_card(item_code)
 
     with tab_t2:
-        st.markdown("#### ✏️ 기존 입출고 트랜잭션 내역 수정 및 삭제")
+        st.markdown("#### ✏️️ 기존 입출고 트랜잭션 내역 수정 및 삭제")
         st.caption("💡 수정 또는 삭제할 입출고 내역을 검색하거나 날짜로 조회하여 선택하세요.")
 
         col_ed1, col_ed2, col_ed3 = st.columns([2, 1, 1])
@@ -819,7 +814,7 @@ elif menu == MENU_TRANS:
 # ---------------------------------------------------------
 elif menu == MENU_ITEMS:
     st.subheader("🏷️ 품목 등록 및 수정 관리")
-    tab1, tab2, tab3 = st.tabs(["✍️ 개별 직접 등록", "✏️ 기존 품목 수정", "📂 기초 데이터 엑셀 일괄 등록"])
+    tab1, tab2, tab3 = st.tabs(["✍️ 개별 직접 등록", "✏️️ 기존 품목 수정", "📂 기초 데이터 엑셀 일괄 등록"])
 
     with tab1:
         st.markdown("#### ✍️ 신규 품목 및 초기 재고 개별 등록")
