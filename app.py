@@ -1092,7 +1092,7 @@ elif menu == MENU_ITEMS:
                     st.error(f"기초 데이터 초고속 업로드 처리 중 오류 발생: {e}")
 
 # ---------------------------------------------------------
-# 메뉴 4: 입출고 내역 조회 (Streamlit 네이티브 표 렌더링 적용)
+# 메뉴 4: 입출고 내역 조회 (완벽한 품명 매핑 및 전체 한 페이지 출력)
 # ---------------------------------------------------------
 elif menu == MENU_HISTORY:
     st.subheader("🔍 입출고 통합 이력 조회 및 분석")
@@ -1130,12 +1130,12 @@ elif menu == MENU_HISTORY:
     except Exception:
         trans_data = []
 
-    # 품목 마스터 정보를 키-값 대소문자 무관하게 완벽 매핑
+    # 품목 마스터 정보를 대소문자/공백 무관하게 완벽 매핑
     items_resp = db.supabase.table("items").select("item_code, item_name, currency").limit(5000).execute()
     item_info_map = {}
     for i in (items_resp.data or []):
         icode_key = str(i.get("item_code", "")).strip().upper()
-        item_info_map[icode_key] = i
+        item_info_map[icode_key] = i.get("item_name", "-")
 
     filtered_trans_data = []
     for t in trans_data:
@@ -1149,8 +1149,17 @@ elif menu == MENU_HISTORY:
             continue
 
         icode = str(t.get("item_code", "-")).strip()
-        iinfo = item_info_map.get(icode.upper(), {})
-        iname = iinfo.get("item_name", "-")
+        iname = item_info_map.get(icode.upper(), "-")
+        
+        # 만약 맵에서 못 찾았다면 단건 조회를 통해 보완
+        if iname == "-" or not iname:
+            try:
+                res = db.supabase.table("items").select("item_name").eq("item_code", icode).execute()
+                if res.data:
+                    iname = res.data[0].get("item_name", "-")
+                    item_info_map[icode.upper()] = iname
+            except:
+                pass
 
         if hist_search.strip():
             kw = hist_search.strip().lower()
@@ -1170,9 +1179,21 @@ elif menu == MENU_HISTORY:
         table_rows = []
         for idx, t in enumerate(filtered_trans_data, 1):
             icode = str(t.get("item_code", "-")).strip()
-            iinfo = item_info_map.get(icode.upper(), {})
-            iname = iinfo.get("item_name", "-")
-            curr = safe_str_clean(iinfo.get("currency"), "KRW")
+            iname = item_info_map.get(icode.upper(), "-")
+            if iname == "-" or not iname:
+                try:
+                    res = db.supabase.table("items").select("item_name").eq("item_code", icode).execute()
+                    if res.data:
+                        iname = res.data[0].get("item_name", "-")
+                except:
+                    pass
+
+            # 환율 계산을 위한 통화 정보 조회
+            try:
+                curr_res = db.supabase.table("items").select("currency").eq("item_code", icode).execute()
+                curr = safe_str_clean(curr_res.data[0].get("currency"), "KRW") if curr_res.data else "KRW"
+            except:
+                curr = "KRW"
             
             qty = safe_int_clean(t.get("quantity"), 0)
             price = safe_float(t.get("unit_price"), 0.0)
@@ -1209,7 +1230,6 @@ elif menu == MENU_HISTORY:
 
         df_trans_all = pd.DataFrame(table_rows)
 
-        # Streamlit 네이티브 DataFrame 및 행 스타일링 적용 (HTML 태그 노출 원천 방지)
         def highlight_trans_type(row):
             val = str(row.get("구분", ""))
             if "입고" in val or "IN" in val:
@@ -1220,20 +1240,21 @@ elif menu == MENU_HISTORY:
 
         styled_trans_df = df_trans_all.style.apply(highlight_trans_type, axis=1)
 
+        # 컬럼 폭 최적화 설정 적용 (한 페이지에 깔끔하게 맞도록 폭 배분)
         st.dataframe(
             styled_trans_df,
             column_config={
                 "No": st.column_config.NumberColumn("No", width="small", format="%d"),
-                "일자": st.column_config.TextColumn("일자", width="medium"),
+                "일자": st.column_config.TextColumn("일자", width="small"),
                 "구분": st.column_config.TextColumn("구분", width="small"),
-                "품목코드": st.column_config.TextColumn("품목코드", width="medium"),
-                "품명": st.column_config.TextColumn("품명", width="large"),
+                "품목코드": st.column_config.TextColumn("품목코드", width="small"),
+                "품명": st.column_config.TextColumn("품명", width="medium"),
                 "수량": st.column_config.TextColumn("수량", width="small"),
-                "원화환산액": st.column_config.TextColumn("원화환산액", width="medium"),
-                "총금액": st.column_config.TextColumn("총금액", width="medium"),
+                "원화환산액": st.column_config.TextColumn("원화환산액", width="small"),
+                "총금액": st.column_config.TextColumn("총금액", width="small"),
                 "담당자": st.column_config.TextColumn("담당자", width="small"),
                 "요청자": st.column_config.TextColumn("요청자", width="small"),
-                "비고": st.column_config.TextColumn("비고", width="large")
+                "비고": st.column_config.TextColumn("비고", width="medium")
             },
             use_container_width=True,
             hide_index=True
