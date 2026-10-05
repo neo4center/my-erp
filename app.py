@@ -113,50 +113,28 @@ def render_a4_spec_card(item_code):
         return
     item = item_resp.data[0]
 
-    lots_resp = db.supabase.table("stock_lots").select("current_qty, unit_price, inbound_date").eq("item_code", item_code).gt("current_qty", 0).execute()
-    lots = lots_resp.data or []
-    current_stock = sum(safe_int_clean(l.get("current_qty"), 0) for l in lots)
-    
-    curr = safe_str_clean(item.get("currency"), "KRW")
-    base_price = safe_float(item.get("unit_price"), 0.0)
-    base_in_date = item.get("in_date", str(datetime.date.today()))
-
-    total_val_krw = 0
-    representative_price = base_price
-    representative_rate = 1.0
-    representative_year = get_year_from_date(base_in_date)
-
-    if lots:
-        representative_price = safe_float(lots[0].get("unit_price"), base_price)
-        rep_date = lots[0].get("inbound_date", base_in_date)
-        representative_year = get_year_from_date(rep_date)
-        representative_rate = get_exchange_rate_by_year(curr, representative_year)
-
-        for l in lots:
-            l_qty = safe_int_clean(l.get("current_qty"), 0)
-            l_price = safe_float(l.get("unit_price"), base_price)
-            l_date = l.get("inbound_date", base_in_date)
-            l_year = get_year_from_date(l_date)
-            l_rate = get_exchange_rate_by_year(curr, l_year)
-            total_val_krw += round((l_price * l_rate) * l_qty)
-    else:
-        representative_rate = get_exchange_rate_by_year(curr, representative_year)
-        total_val_krw = 0
-
-    unit_krw_display = int(round(representative_price * representative_rate))
-
-    trans_resp = db.supabase.table("stock_transactions").select("*").eq("item_code", item_code).order("trans_date", desc=False).limit(100).execute()
+    # 트랜잭션 내역을 기반으로 현재 재고를 정확하게 산정 (입고 총합 - 출고 총합)
+    trans_resp = db.supabase.table("stock_transactions").select("*").eq("item_code", item_code).order("trans_date", desc=False).execute()
     trans_data = trans_resp.data or []
     
+    calc_stock = 0
     in_rows, out_rows = [], []
     in_idx, out_idx = 1, 1
     total_in_qty, total_in_amt = 0, 0
     total_out_qty, total_out_amt = 0, 0
     
+    curr = safe_str_clean(item.get("currency"), "KRW")
+    base_price = safe_float(item.get("unit_price"), 0.0)
+    base_in_date = item.get("in_date", str(datetime.date.today()))
+    
+    representative_price = base_price
+    representative_year = get_year_from_date(base_in_date)
+    representative_rate = get_exchange_rate_by_year(curr, representative_year)
+
     for t in trans_data:
         t_type = t.get("trans_type", "")
         qty = safe_int_clean(t.get("quantity"), 0)
-        price = safe_float(t.get("unit_price"), 0.0)
+        price = safe_float(t.get("unit_price"), base_price)
         t_date = t.get("trans_date", "")
         t_year = get_year_from_date(t_date)
         t_rate = get_exchange_rate_by_year(curr, t_year)
@@ -194,12 +172,18 @@ def render_a4_spec_card(item_code):
             in_rows.append(row_dict)
             total_in_qty += qty
             total_in_amt += total_row_amt
+            calc_stock += qty
             in_idx += 1
         elif t_type in ["OUT", "출고"]:
             out_rows.append(row_dict)
             total_out_qty += qty
             total_out_amt += total_row_amt
+            calc_stock -= qty
             out_idx += 1
+
+    current_stock = max(0, calc_stock)
+    total_val_krw = round(current_stock * (representative_price * representative_rate))
+    unit_krw_display = int(round(representative_price * representative_rate))
 
     df_in = pd.DataFrame(in_rows)
     df_out = pd.DataFrame(out_rows)
@@ -217,7 +201,7 @@ def render_a4_spec_card(item_code):
 
     with st.container():
         st.markdown("<div class='a4-card'>", unsafe_allow_html=True)
-        st.markdown(f"<div class='a4-header'><h2>자 제 품 목 명 세 서</h2><p>발행일자: {datetime.date.today()}</p></div>".replace("자제", "자재"), unsafe_allow_html=True)
+        st.markdown(f"<div class='a4-header'><h2>자재품목명세서</h2><p>발행일자: {datetime.date.today()}</p></div>", unsafe_allow_html=True)
         col_img, col_info = st.columns([1, 3])
 
         with col_img:
@@ -243,7 +227,6 @@ def render_a4_spec_card(item_code):
 
         st.markdown("---")
         
-        # 입고 내역 제목 및 합계 표시
         col_t1, col_t1_sum = st.columns([2, 3])
         col_t1.markdown("### 📥 1. 입고 내역")
         col_t1_sum.markdown(f"<div style='text-align: right; padding-top: 10px; font-weight: bold; color: #1B5E20;'>합계 수량: {total_in_qty:,} 개 &nbsp;|&nbsp; 총 금액: {total_in_amt:,} 원</div>", unsafe_allow_html=True)
@@ -255,7 +238,6 @@ def render_a4_spec_card(item_code):
 
         st.markdown("---")
 
-        # 출고 내역 제목 및 합계 표시
         col_t2, col_t2_sum = st.columns([2, 3])
         col_t2.markdown("### 📤 2. 출고 내역")
         col_t2_sum.markdown(f"<div style='text-align: right; padding-top: 10px; font-weight: bold; color: #B71C1C;'>합계 수량: {total_out_qty:,} 개 &nbsp;|&nbsp; 총 금액: {total_out_amt:,} 원</div>", unsafe_allow_html=True)
@@ -394,6 +376,26 @@ if menu == MENU_STOCK:
     except Exception:
         all_items = []
 
+    # stock_lots 외에 stock_transactions 데이터를 함께 집계하여 완벽한 재고 수량 계산
+    try:
+        all_trans_resp = db.supabase.table("stock_transactions").select("item_code, trans_type, quantity").limit(50000).execute().data or []
+    except Exception:
+        all_trans_resp = []
+
+    item_calc_stock_map = {}
+    for t in all_trans_resp:
+        ic = t.get("item_code")
+        if not ic:
+            continue
+        q = safe_int_clean(t.get("quantity"), 0)
+        ttype = t.get("trans_type", "")
+        if ic not in item_calc_stock_map:
+            item_calc_stock_map[ic] = 0
+        if ttype in ["IN", "입고"]:
+            item_calc_stock_map[ic] += q
+        elif ttype in ["OUT", "출고"]:
+            item_calc_stock_map[ic] -= q
+
     lots_data = db.get_stock_by_lots() or []
     lot_map = {}
     for lot in lots_data:
@@ -425,7 +427,11 @@ if menu == MENU_STOCK:
         
         if item_lots:
             for lot in item_lots:
+                # Lot별 수량 또는 트랜잭션 집계 수량 반영
                 qty = safe_int_clean(lot.get("current_qty"), 0)
+                if icode in item_calc_stock_map:
+                    qty = max(0, item_calc_stock_map[icode])
+                
                 price = safe_float(lot.get("unit_price"), base_price)
                 in_date = lot.get("inbound_date", base_in_date)
                 
@@ -456,9 +462,11 @@ if menu == MENU_STOCK:
                     "비고": remark
                 })
         else:
+            qty = max(0, item_calc_stock_map.get(icode, 0))
             year = get_year_from_date(base_in_date)
             rate = get_exchange_rate_by_year(curr, year)
             unit_krw = round(base_price * rate)
+            stock_amt = round(unit_krw * qty)
 
             table_rows.append({
                 "사진": item.get("photo_url"),
@@ -474,11 +482,11 @@ if menu == MENU_STOCK:
                 "기기명": device_name,
                 "Maker": maker,
                 "입고일": base_in_date,
-                "현재재고": 0,
+                "현재재고": qty,
                 "화폐단위": curr,
                 "단가": base_price,
                 "원화환산액": unit_krw,
-                "재고금액": 0,
+                "재고금액": stock_amt,
                 "비고": remark
             })
 
@@ -500,33 +508,7 @@ if menu == MENU_STOCK:
         if sel_cat_main != "전체":
             df_stock = df_stock[df_stock["대분류"] == sel_cat_main]
 
-        total_all_asset_amt = 0
-        try:
-            all_items_resp = db.supabase.table("items").select("item_code, unit_price, currency, in_date").limit(5000).execute().data or []
-            all_lots_resp = db.get_stock_by_lots() or []
-            all_lot_map = {}
-            for l in all_lots_resp:
-                ic = l.get("item_code")
-                if ic not in all_lot_map:
-                    all_lot_map[ic] = []
-                all_lot_map[ic].append(l)
-
-            for item in all_items_resp:
-                ic = item.get("item_code")
-                curr = safe_str_clean(item.get("currency"), "KRW")
-                base_price = safe_float(item.get("unit_price"), 0.0)
-                base_in_date = item.get("in_date", str(datetime.date.today()))
-                ilots = all_lot_map.get(ic, [])
-                if ilots:
-                    for l in ilots:
-                        l_qty = safe_int_clean(l.get("current_qty"), 0)
-                        l_price = safe_float(l.get("unit_price"), base_price)
-                        l_date = l.get("inbound_date", base_in_date)
-                        l_year = get_year_from_date(l_date)
-                        l_rate = get_exchange_rate_by_year(curr, l_year)
-                        total_all_asset_amt += round((l_price * l_rate) * l_qty)
-        except Exception:
-            total_all_asset_amt = 0
+        total_all_asset_amt = sum(df_stock["재고금액"])
 
         col1, col2, col3 = st.columns([2, 2, 2])
         col1.metric("전체 등록 품목 수", f"{total_count} 개")
@@ -607,7 +589,6 @@ elif menu == MENU_TRANS:
             with st.form("trans_form"):
                 st.markdown("#### 📌 입출고 구분 선택")
                 
-                # 입고(연한 연두색) / 출고(연한 핑크색) 대형 박스 스타일링
                 st.markdown("""
                 <style>
                 div.row-widget.stRadio > div {
@@ -1145,7 +1126,7 @@ elif menu == MENU_ITEMS:
                         st.success(f"🎉 총 {len(items_payloads)}개 품목 기초 데이터 초고속 세팅 완료! (기초 Lot 생성: {len(lots_payloads)}건)")
                         st.rerun()
                     else:
-                        st.warning("⚠️ 엑셀 내 유효한 데이터가 없습니다.")
+                        st.warning("⚠️️ 엑셀 내 유효한 데이터가 없습니다.")
 
                 except Exception as e:
                     st.error(f"기초 데이터 초고속 업로드 처리 중 오류 발생: {e}")
