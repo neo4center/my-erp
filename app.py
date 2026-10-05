@@ -670,9 +670,13 @@ elif menu == MENU_TRANS:
                     st.rerun()
                 
                 t_type = data.get("trans_type")
-                color_style = "color: #2E7D32; font-size: 20px; font-weight: bold;" if t_type == "입고" else "color: #C62828; font-size: 20px; font-weight: bold;"
                 
-                st.markdown(f"다음 내용으로 <span style='{color_style}'>[{t_type}]</span> 처리를 최종 실행하시겠습니까?")
+                # HTML 태그 파싱 오류 방지를 위해 st.markdown 대신 안전한 st.write 활용
+                if t_type == "입고":
+                    st.success(f"다음 내용으로 [입고] 처리를 최종 실행하시겠습니까?")
+                else:
+                    st.error(f"다음 내용으로 [출고] 처리를 최종 실행하시겠습니까?")
+
                 st.markdown("---")
                 st.write(f"- **품목코드:** `{data.get('item_code')}`")
                 st.write(f"- **품명:** **{data.get('item_name')}**")
@@ -725,7 +729,7 @@ elif menu == MENU_TRANS:
             render_a4_spec_card(item_code)
 
     with tab_t2:
-        st.markdown("#### ✏️️ 기존 입출고 트랜잭션 내역 수정 및 삭제")
+        st.markdown("#### ✏️ 기존 입출고 트랜잭션 내역 수정 및 삭제")
         st.caption("💡 수정 또는 삭제할 입출고 내역을 검색하거나 날짜로 조회하여 선택하세요.")
 
         col_ed1, col_ed2, col_ed3 = st.columns([2, 1, 1])
