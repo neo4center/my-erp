@@ -376,7 +376,7 @@ if menu == MENU_STOCK:
     except Exception:
         all_items = []
 
-    # stock_transactions 데이터를 기반으로 모든 품목의 현재고를 정확하게 계산
+    # stock_transactions 데이터를 기반으로 모든 품목의 현재고를 완벽하게 계산
     try:
         all_trans_resp = db.supabase.table("stock_transactions").select("item_code, trans_type, quantity").limit(50000).execute().data or []
     except Exception:
@@ -423,8 +423,9 @@ if menu == MENU_STOCK:
         detail_no = safe_str_clean(item.get("item_detail_no"))
         iname = safe_str_clean(item.get("item_name"))
 
-        item_lots = lot_map.get(icode, [])
+        # 트랜잭션 집계 수량을 현재고로 설정 (마이너스 방지 및 완벽 반영)
         calc_qty = max(0, item_calc_stock_map.get(icode, 0))
+        item_lots = lot_map.get(icode, [])
         
         if item_lots:
             for lot in item_lots:
@@ -720,7 +721,7 @@ elif menu == MENU_TRANS:
             render_a4_spec_card(item_code)
 
     with tab_t2:
-        st.markdown("#### ✏️️ 기존 입출고 트랜잭션 내역 수정 및 삭제")
+        st.markdown("#### ✏️ 기존 입출고 트랜잭션 내역 수정 및 삭제")
         st.caption("💡 수정 또는 삭제할 입출고 내역을 검색하거나 날짜로 조회하여 선택하세요.")
 
         col_ed1, col_ed2, col_ed3 = st.columns([2, 1, 1])
@@ -814,7 +815,7 @@ elif menu == MENU_TRANS:
 # ---------------------------------------------------------
 elif menu == MENU_ITEMS:
     st.subheader("🏷️ 품목 등록 및 수정 관리")
-    tab1, tab2, tab3 = st.tabs(["✍️ 개별 직접 등록", "✏️️ 기존 품목 수정", "📂 기초 데이터 엑셀 일괄 등록"])
+    tab1, tab2, tab3 = st.tabs(["✍️ 개별 직접 등록", "✏️ 기존 품목 수정", "📂 기초 데이터 엑셀 일괄 등록"])
 
     with tab1:
         st.markdown("#### ✍️ 신규 품목 및 초기 재고 개별 등록")
@@ -1121,7 +1122,7 @@ elif menu == MENU_ITEMS:
                         st.success(f"🎉 총 {len(items_payloads)}개 품목 기초 데이터 초고속 세팅 완료! (기초 Lot 생성: {len(lots_payloads)}건)")
                         st.rerun()
                     else:
-                        st.warning("⚠️️ 엑셀 내 유효한 데이터가 없습니다.")
+                        st.warning("⚠️ 엑셀 내 유효한 데이터가 없습니다.")
 
                 except Exception as e:
                     st.error(f"기초 데이터 초고속 업로드 처리 중 오류 발생: {e}")
@@ -1432,7 +1433,7 @@ elif menu == "👥 사용자 관리 (관리자)":
             sel_del_label = st.selectbox("삭제할 사용자 계정 선택:", list(del_opts.keys()))
             target_del_emp = del_opts[sel_del_label]
 
-            st.warning(f"⚠️ 선택한 계정 (`{target_del_emp}`)을 삭제하시겠습니까? 삭제된 계정은 복구할 수 없습니다.")
+            st.warning(f"⚠️️ 선택한 계정 (`{target_del_emp}`)을 삭제하시겠습니까? 삭제된 계정은 복구할 수 없습니다.")
             if st.button("❌ 선택 계정 즉시 삭제"):
                 if target_del_emp == user["emp_no"]:
                     st.error("현재 로그인되어 있는 본인 계정은 삭제할 수 없습니다.")
