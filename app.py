@@ -150,6 +150,8 @@ def render_a4_spec_card(item_code):
     
     in_rows, out_rows = [], []
     in_idx, out_idx = 1, 1
+    total_in_qty, total_in_amt = 0, 0
+    total_out_qty, total_out_amt = 0, 0
     
     for t in trans_data:
         t_type = t.get("trans_type", "")
@@ -159,6 +161,7 @@ def render_a4_spec_card(item_code):
         t_year = get_year_from_date(t_date)
         t_rate = get_exchange_rate_by_year(curr, t_year)
         t_krw_unit = price * t_rate
+        total_row_amt = round(qty * t_krw_unit)
         
         raw_mgr = safe_str_clean(t.get("manager"), "")
         if not raw_mgr or raw_mgr in ["-", "None", ""]:
@@ -181,7 +184,7 @@ def render_a4_spec_card(item_code):
             "구분": "입고 (IN)" if t_type in ["IN", "입고"] else "출고 (OUT)",
             "수량": f"{qty:,} 개",
             "원화환산액": f"{round(t_krw_unit):,} 원",
-            "총금액": f"{round(qty * t_krw_unit):,} 원",
+            "총금액": f"{total_row_amt:,} 원",
             "담당자": raw_mgr,
             "요청자": raw_req,
             "비고": t_remark
@@ -189,9 +192,13 @@ def render_a4_spec_card(item_code):
 
         if t_type in ["IN", "입고"]:
             in_rows.append(row_dict)
+            total_in_qty += qty
+            total_in_amt += total_row_amt
             in_idx += 1
         elif t_type in ["OUT", "출고"]:
             out_rows.append(row_dict)
+            total_out_qty += qty
+            total_out_amt += total_row_amt
             out_idx += 1
 
     df_in = pd.DataFrame(in_rows)
@@ -210,7 +217,7 @@ def render_a4_spec_card(item_code):
 
     with st.container():
         st.markdown("<div class='a4-card'>", unsafe_allow_html=True)
-        st.markdown(f"<div class='a4-header'><h2>자 제 품 목 명 세 서</h2><p>발행일자: {datetime.date.today()}</p></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='a4-header'><h2>자 제 품 목 명 세 서</h2><p>발행일자: {datetime.date.today()}</p></div>".replace("자제", "자재"), unsafe_allow_html=True)
         col_img, col_info = st.columns([1, 3])
 
         with col_img:
@@ -235,13 +242,24 @@ def render_a4_spec_card(item_code):
             st.markdown(html_table, unsafe_allow_html=True)
 
         st.markdown("---")
-        st.markdown("### 📥 1. 입고 내역 (오름차순 정렬)")
+        
+        # 입고 내역 제목 및 합계 표시
+        col_t1, col_t1_sum = st.columns([2, 3])
+        col_t1.markdown("### 📥 1. 입고 내역")
+        col_t1_sum.markdown(f"<div style='text-align: right; padding-top: 10px; font-weight: bold; color: #1B5E20;'>합계 수량: {total_in_qty:,} 개 &nbsp;|&nbsp; 총 금액: {total_in_amt:,} 원</div>", unsafe_allow_html=True)
+        
         if not df_in.empty:
             st.dataframe(df_in, column_config={"No": st.column_config.NumberColumn("No", width="small", format="%d")}, use_container_width=True, hide_index=True)
         else:
             st.caption("※ 입고 내역이 없습니다.")
 
-        st.markdown("### 📤 2. 출고 내역 (오름차순 정렬)")
+        st.markdown("---")
+
+        # 출고 내역 제목 및 합계 표시
+        col_t2, col_t2_sum = st.columns([2, 3])
+        col_t2.markdown("### 📤 2. 출고 내역")
+        col_t2_sum.markdown(f"<div style='text-align: right; padding-top: 10px; font-weight: bold; color: #B71C1C;'>합계 수량: {total_out_qty:,} 개 &nbsp;|&nbsp; 총 금액: {total_out_amt:,} 원</div>", unsafe_allow_html=True)
+
         if not df_out.empty:
             st.dataframe(df_out, column_config={"No": st.column_config.NumberColumn("No", width="small", format="%d")}, use_container_width=True, hide_index=True)
         else:
@@ -535,7 +553,7 @@ if menu == MENU_STOCK:
         )
 
         st.markdown("---")
-        st.subheader("📄 A4 품목 상세 내역서 출력 및 조회")
+        st.subheader("📄 자재품목명세서 출력 및 조회")
         selected_code = None
         selected_rows = selection_event.selection.rows if selection_event and hasattr(selection_event, "selection") else []
         
@@ -596,7 +614,6 @@ elif menu == MENU_TRANS:
                     display: flex;
                     gap: 20px;
                 }
-                /* 입고 라디오 버튼 박스 (연한 연두색, 굵은 글씨, 큰 크기) */
                 div.row-widget.stRadio > div > label:nth-child(1) {
                     background-color: #E8F5E9 !important;
                     border: 2px solid #66BB6A !important;
@@ -610,7 +627,6 @@ elif menu == MENU_TRANS:
                     cursor: pointer;
                     box-shadow: 0 2px 5px rgba(0,0,0,0.05);
                 }
-                /* 출고 라디오 버튼 박스 (연한 핑크색, 굵은 글씨, 큰 크기) */
                 div.row-widget.stRadio > div > label:nth-child(2) {
                     background-color: #FFEBEE !important;
                     border: 2px solid #EF5350 !important;
@@ -671,7 +687,6 @@ elif menu == MENU_TRANS:
                 
                 t_type = data.get("trans_type")
                 
-                # HTML 태그 파싱 오류 방지를 위해 st.markdown 대신 안전한 st.write 활용
                 if t_type == "입고":
                     st.success(f"다음 내용으로 [입고] 처리를 최종 실행하시겠습니까?")
                 else:
