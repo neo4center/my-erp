@@ -350,7 +350,6 @@ if menu == MENU_STOCK:
     except Exception:
         total_count = 1097
 
-    # 💡 [핵심 수정] items 전체를 1000건 제한 없이 페이징으로 완벽하게 수집
     try:
         all_items = []
         is_filtering = (
@@ -378,7 +377,6 @@ if menu == MENU_STOCK:
                     break
                 start += chunk_size
             else:
-                # 검색이나 필터가 없을 때는 기본 페이징 처리 (100개씩 보기) 구조 유지
                 PAGE_SIZE_STOCK = 100
                 total_stock_pages = max(1, math.ceil(total_count / PAGE_SIZE_STOCK))
                 
@@ -395,7 +393,6 @@ if menu == MENU_STOCK:
     except Exception:
         all_items = []
 
-    # 💡 [핵심 수정] stock_transactions 전체 데이터를 1000건 제한 없이 페이징으로 완벽 수집
     all_trans_resp = []
     try:
         chunk_size = 1000
@@ -687,7 +684,7 @@ elif menu == MENU_TRANS:
             render_a4_spec_card(item_code)
 
     with tab_t2:
-        st.markdown("#### ✏️️ 기존 입출고 트랜잭션 내역 수정 및 삭제")
+        st.markdown("#### ✏️ 기존 입출고 트랜잭션 내역 수정 및 삭제")
         col_ed1, col_ed2, col_ed3 = st.columns([2, 1, 1])
         edit_trans_kw = col_ed1.text_input("🔍 내역 검색 (품목코드, 요청자, 담당자, 비고)", "", key="edit_trans_search")
         edit_start_date = col_ed2.date_input("조회 시작일", value=datetime.date.today() - datetime.timedelta(days=180), key="edit_start")
@@ -778,8 +775,8 @@ elif menu == MENU_TRANS:
 # 메뉴 3: 품목 관리
 # ---------------------------------------------------------
 elif menu == MENU_ITEMS:
-    st.subheader("🏷️ 품목 등록 및 수정 관리")
-    tab1, tab2, tab3 = st.tabs(["✍️ 개별 직접 등록", "✏️ 기존 품목 수정", "📂 기초 데이터 엑셀 일괄 등록"])
+    st.subheader("🏷️️ 품목 등록 및 수정 관리")
+    tab1, tab2, tab3 = st.tabs(["✍️️ 개별 직접 등록", "✏️ 기존 품목 수정", "📂 기초 데이터 엑셀 일괄 등록"])
 
     with tab1:
         with st.form("new_item_form", clear_on_submit=True):
@@ -972,14 +969,16 @@ elif menu == MENU_ITEMS:
                     st.error(f"오류 발생: {e}")
 
 # ---------------------------------------------------------
-# 메뉴 4: 입출고 내역 조회
+# 메뉴 4: 입출고 내역 조회 (완벽한 품명 매핑 및 금액 계산 복구)
 # ---------------------------------------------------------
 elif menu == MENU_HISTORY:
     st.subheader("🔍 입출고 통합 이력 조회 및 분석")
+    st.caption("💡 운영 입출고 내역을 검색하고 기간별로 조회할 수 있습니다.")
+
     col_f1, col_f2, col_f3 = st.columns([2, 1, 1])
-    hist_search = col_f1.text_input("🔍 검색어 입력", "")
-    start_date_filter = col_f2.date_input("시작일", value=datetime.date.today() - datetime.timedelta(days=30))
-    end_date_filter = col_f3.date_input("종료일", value=datetime.date.today())
+    hist_search = col_f1.text_input("🔍 검색어 입력 (품목코드, 품명, 요청자, 비고 등)", "")
+    start_date_filter = col_f2.date_input("조회 시작일", value=datetime.date.today() - datetime.timedelta(days=30))
+    end_date_filter = col_f3.date_input("조회 종료일", value=datetime.date.today())
 
     try:
         h_query = db.supabase.table("stock_transactions").select("*").neq("requester", "-").order("trans_date", desc=True)
@@ -988,7 +987,13 @@ elif menu == MENU_HISTORY:
         trans_data = []
 
     items_resp = db.supabase.table("items").select("item_code, item_name, currency").limit(5000).execute()
-    item_info_map = {str(i.get("item_code", "")).strip().upper(): i.get("item_name", "-") for i in (items_resp.data or [])}
+    item_info_map = {}
+    for i in (items_resp.data or []):
+        icode_key = str(i.get("item_code", "")).strip().upper()
+        item_info_map[icode_key] = {
+            "name": i.get("item_name", "-"),
+            "currency": safe_str_clean(i.get("currency"), "KRW")
+        }
 
     filtered_trans_data = []
     for t in trans_data:
@@ -1002,11 +1007,19 @@ elif menu == MENU_HISTORY:
             continue
 
         icode = str(t.get("item_code", "-")).strip()
-        iname = item_info_map.get(icode.upper(), "-")
+        info = item_info_map.get(icode.upper(), {"name": "-", "currency": "KRW"})
+        iname = info["name"]
 
         if hist_search.strip():
             kw = hist_search.strip().lower()
-            if not (kw in icode.lower() or kw in iname.lower() or kw in str(t.get("requester","")).lower() or kw in str(t.get("remark","")).lower()):
+            matched = (
+                kw in icode.lower() or 
+                kw in iname.lower() or 
+                kw in str(t.get("requester","")).lower() or 
+                kw in str(t.get("manager","")).lower() or 
+                kw in str(t.get("remark","")).lower()
+            )
+            if not matched:
                 continue
 
         filtered_trans_data.append(t)
@@ -1015,24 +1028,90 @@ elif menu == MENU_HISTORY:
         table_rows = []
         for idx, t in enumerate(filtered_trans_data, 1):
             icode = str(t.get("item_code", "-")).strip()
-            iname = item_info_map.get(icode.upper(), "-")
+            info = item_info_map.get(icode.upper(), {"name": "-", "currency": "KRW"})
+            iname = info["name"]
+            curr = info["currency"]
+
             qty = safe_int_clean(t.get("quantity"), 0)
             price = safe_float(t.get("unit_price"), 0.0)
             t_date = t.get("trans_date", "")
             t_type = str(t.get("trans_type", "")).strip().upper()
             
+            year = get_year_from_date(t_date)
+            rate = get_exchange_rate_by_year(curr, year)
+            unit_krw = round(price * rate)
+            total_krw = round(qty * unit_krw)
+            
             type_display = "입고 (IN)" if t_type in ["IN", "입고"] else "출고 (OUT)"
+
+            raw_mgr = safe_str_clean(t.get("manager"), "")
+            if not raw_mgr or raw_mgr == "-":
+                raw_mgr = "최광호"
+            else:
+                for pos in POSITIONS:
+                    raw_mgr = raw_mgr.replace(pos, "").strip()
+
             table_rows.append({
-                "No": idx, "일자": t_date, "구분": type_display,
-                "품목코드": icode, "품명": iname, "수량": f"{qty:,} 개",
+                "No": idx,
+                "일자": t_date,
+                "구분": type_display,
+                "품목코드": icode,
+                "품명": iname,
+                "수량": f"{qty:,} 개",
+                "원화환산액": f"{unit_krw:,} 원",
+                "총금액": f"{total_krw:,} 원",
+                "담당자": raw_mgr,
                 "요청자": safe_str_clean(t.get("requester"), "-"),
                 "비고": safe_str_clean(t.get("remark"), "-")
             })
 
         df_trans_all = pd.DataFrame(table_rows)
-        st.dataframe(df_trans_all, use_container_width=True, hide_index=True)
+
+        def highlight_trans_type(row):
+            val = str(row.get("구분", ""))
+            if "입고" in val or "IN" in val:
+                return ['background-color: #E8F5E9; color: #1B5E20; font-weight: bold;'] * len(row)
+            elif "출고" in val or "OUT" in val:
+                return ['background-color: #FFEBEE; color: #B71C1C; font-weight: bold;'] * len(row)
+            return [''] * len(row)
+
+        styled_trans_df = df_trans_all.style.apply(highlight_trans_type, axis=1)
+
+        st.dataframe(
+            styled_trans_df,
+            column_config={
+                "No": st.column_config.NumberColumn("No", width="small", format="%d"),
+                "일자": st.column_config.TextColumn("일자", width="small"),
+                "구분": st.column_config.TextColumn("구분", width="small"),
+                "품목코드": st.column_config.TextColumn("품목코드", width="small"),
+                "품명": st.column_config.TextColumn("품명", width="medium"),
+                "수량": st.column_config.TextColumn("수량", width="small"),
+                "원화환산액": st.column_config.TextColumn("원화환산액", width="small"),
+                "총금액": st.column_config.TextColumn("총금액", width="small"),
+                "담당자": st.column_config.TextColumn("담당자", width="small"),
+                "요청자": st.column_config.TextColumn("요청자", width="small"),
+                "비고": st.column_config.TextColumn("비고", width="medium")
+            },
+            use_container_width=True,
+            hide_index=True
+        )
+
+        st.markdown("---")
+        col_down1, col_down2 = st.columns([2, 2])
+        with col_down1:
+            out_excel = io.BytesIO()
+            with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
+                df_trans_all.to_excel(writer, index=False, sheet_name="운영입출고이력")
+            st.download_button(
+                label="📥 운영 입출고 이력 전체 엑셀 다운로드 (.xlsx)",
+                data=out_excel.getvalue(),
+                file_name=f"ERP_운영입출고이력_{datetime.date.today()}.xlsx"
+            )
+        with col_down2:
+            if st.button("🖨️ 브라우저 인쇄 / PDF 저장 (Print)"):
+                st.markdown("<script>window.print();</script>", unsafe_allow_html=True)
     else:
-        st.info("조건에 일치하는 이력이 없습니다.")
+        st.info("조건에 일치하는 운영 입출고 이력이 없습니다.")
 
 # ---------------------------------------------------------
 # 메뉴 5: 환율 설정
