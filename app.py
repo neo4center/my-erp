@@ -969,7 +969,7 @@ elif menu == MENU_ITEMS:
                     st.error(f"오류 발생: {e}")
 
 # ---------------------------------------------------------
-# 메뉴 4: 입출고 내역 조회 (기초재고 세팅 제외, 운영 내역만 표시)
+# 메뉴 4: 입출고 내역 조회 (품목코드 기준 품명 매핑 및 운영 내역만 표시)
 # ---------------------------------------------------------
 elif menu == MENU_HISTORY:
     st.subheader("🔍 입출고 통합 이력 조회 및 분석")
@@ -981,7 +981,6 @@ elif menu == MENU_HISTORY:
     end_date_filter = col_f3.date_input("조회 종료일", value=datetime.date.today())
 
     try:
-        # 기초재고 일괄 등록 건(requester가 '-' 이거나 초기등록 관련)은 제외하고 운영 내역만 가져옴
         h_query = db.supabase.table("stock_transactions").select("*") \
             .neq("requester", "-") \
             .neq("requester", "초기재고일괄등록") \
@@ -992,14 +991,25 @@ elif menu == MENU_HISTORY:
     except Exception:
         trans_data = []
 
-    items_resp = db.supabase.table("items").select("item_code, item_name, currency").limit(5000).execute()
+    # 품목 마스터 정보를 페이징하여 1000건 제한 없이 전체 수집 후 품목코드 기준으로 매핑 맵 생성
     item_info_map = {}
-    for i in (items_resp.data or []):
-        icode_key = str(i.get("item_code", "")).strip().upper()
-        item_info_map[icode_key] = {
-            "name": i.get("item_name", "-"),
-            "currency": safe_str_clean(i.get("currency"), "KRW")
-        }
+    try:
+        chunk_size = 1000
+        start = 0
+        while True:
+            items_resp = db.supabase.table("items").select("item_code, item_name, currency").range(start, start + chunk_size - 1).execute()
+            chunk_items = items_resp.data or []
+            for i in chunk_items:
+                icode_key = str(i.get("item_code", "")).strip().upper()
+                item_info_map[icode_key] = {
+                    "name": i.get("item_name", "-"),
+                    "currency": safe_str_clean(i.get("currency"), "KRW")
+                }
+            if len(chunk_items) < chunk_size:
+                break
+            start += chunk_size
+    except Exception:
+        pass
 
     filtered_trans_data = []
     for t in trans_data:
@@ -1147,4 +1157,3 @@ elif menu == "👥 사용자 관리 (관리자)":
     resp = db.supabase.table("users").select("emp_no, name, position, is_admin, created_at").execute()
     if resp.data:
         st.dataframe(pd.DataFrame(resp.data).rename(columns={"emp_no": "사번", "name": "이름", "position": "직급", "is_admin": "관리자권한", "created_at": "등록일시"}), use_container_width=True)
-        
