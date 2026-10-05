@@ -589,41 +589,46 @@ elif menu == MENU_TRANS:
             with st.form("trans_form"):
                 st.markdown("#### 📌 입출고 구분 선택")
                 
-                # 입고 / 출고 라디오 버튼 영역 시인성 강화 CSS 및 박스 디자인 적용
+                # 입고(연한 연두색) / 출고(연한 핑크색) 대형 박스 스타일링
                 st.markdown("""
                 <style>
-                /* 입출고 라디오 버튼 감싸는 컨테이너 스타일링 */
                 div.row-widget.stRadio > div {
                     display: flex;
                     gap: 20px;
                 }
+                /* 입고 라디오 버튼 박스 (연한 연두색, 굵은 글씨, 큰 크기) */
                 div.row-widget.stRadio > div > label:nth-child(1) {
-                    background-color: #E8F5E9;
-                    border: 2px solid #81C784;
-                    padding: 10px 20px;
-                    border-radius: 8px;
-                    font-weight: bold;
-                    color: #1B5E20;
+                    background-color: #E8F5E9 !important;
+                    border: 2px solid #66BB6A !important;
+                    padding: 14px 25px !important;
+                    border-radius: 10px !important;
+                    font-size: 17px !important;
+                    font-weight: bold !important;
+                    color: #1B5E20 !important;
                     flex: 1;
                     text-align: center;
                     cursor: pointer;
+                    box-shadow: 0 2px 5px rgba(0,0,0,0.05);
                 }
+                /* 출고 라디오 버튼 박스 (연한 핑크색, 굵은 글씨, 큰 크기) */
                 div.row-widget.stRadio > div > label:nth-child(2) {
-                    background-color: #FFEBEE;
-                    border: 2px solid #E57373;
-                    padding: 10px 20px;
-                    border-radius: 8px;
-                    font-weight: bold;
-                    color: #B71C1C;
+                    background-color: #FFEBEE !important;
+                    border: 2px solid #EF5350 !important;
+                    padding: 14px 25px !important;
+                    border-radius: 10px !important;
+                    font-size: 17px !important;
+                    font-weight: bold !important;
+                    color: #B71C1C !important;
                     flex: 1;
                     text-align: center;
                     cursor: pointer;
+                    box-shadow: 0 2px 5px rgba(0,0,0,0.05);
                 }
                 </style>
                 """, unsafe_allow_html=True)
 
                 col1, col2 = st.columns(2)
-                trans_type = col1.radio("입출고 구분", ["📥 입고 (IN)", "📤 출고 (OUT)"], horizontal=True)
+                trans_type = col1.radio("입출고 구분", ["📥  입 고 (IN)", "📤  출 고 (OUT)"], horizontal=True)
                 trans_date = col2.date_input("일자", datetime.date.today())
 
                 col3, col4 = st.columns(2)
@@ -720,7 +725,7 @@ elif menu == MENU_TRANS:
             render_a4_spec_card(item_code)
 
     with tab_t2:
-        st.markdown("#### ✏️ 기존 입출고 트랜잭션 내역 수정 및 삭제")
+        st.markdown("#### ✏️️ 기존 입출고 트랜잭션 내역 수정 및 삭제")
         st.caption("💡 수정 또는 삭제할 입출고 내역을 검색하거나 날짜로 조회하여 선택하세요.")
 
         col_ed1, col_ed2, col_ed3 = st.columns([2, 1, 1])
