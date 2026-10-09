@@ -935,6 +935,13 @@ elif menu == MENU_ITEMS:
             t = edit_opts[sel_edit]
             target_icode = t["item_code"]
 
+            # 기존 등록된 사진 미리보기 표시
+            existing_photo = t.get("photo_url")
+            if existing_photo:
+                st.image(existing_photo, width=150, caption="현재 등록된 사진")
+            else:
+                st.caption("현재 등록된 사진 없음")
+
             with st.form("edit_item_form"):
                 col1, col2, col3 = st.columns(3)
                 e_name = col1.text_input("품명 *", value=safe_str_clean(t.get("item_name")))
@@ -954,9 +961,15 @@ elif menu == MENU_ITEMS:
                 e_curr = col9.selectbox("화폐", curr_list, index=curr_list.index(t.get("currency", "KRW")) if t.get("currency") in curr_list else 0)
 
                 e_remark = st.text_input("비고", value=safe_str_clean(t.get("remark")))
+                
+                # 사진 변경을 위한 파일 업로더 추가
+                edit_img_file = st.file_uploader("품목 사진 수정/교체 (새 사진 첨부 시 기존 사진 덮어쓰기)", type=["png", "jpg", "jpeg"], key="edit_img_file")
 
                 if st.form_submit_button("품목 정보 수정 완료"):
-                    db.supabase.table("items").update({
+                    # 새 사진이 업로드되었는지 확인 후 처리
+                    new_photo_url = db.upload_item_image(edit_img_file, target_icode) if edit_img_file else t.get("photo_url")
+
+                    update_payload = {
                         "item_name": safe_str_clean(e_name),
                         "item_detail_no": safe_str_clean(e_detail),
                         "model_spec": safe_str_clean(e_spec),
@@ -967,8 +980,12 @@ elif menu == MENU_ITEMS:
                         "unit_price": float(e_price),
                         "currency": e_curr,
                         "remark": safe_str_clean(e_remark)
-                    }).eq("item_code", target_icode).execute()
-                    st.success("✅ 품목 정보가 수정되었습니다!")
+                    }
+                    if new_photo_url:
+                        update_payload["photo_url"] = new_photo_url
+
+                    db.supabase.table("items").update(update_payload).eq("item_code", target_icode).execute()
+                    st.success("✅ 품목 정보 및 사진이 성공적으로 수정되었습니다!")
                     st.rerun()
 
     with tab3:
