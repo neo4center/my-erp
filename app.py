@@ -287,7 +287,9 @@ if st.session_state.logged_in_user is None:
 user = st.session_state.logged_in_user
 st.title("🏭 광주오포센터 자동화 ERP")
 
-st.sidebar.markdown(f"👤 접속자: **{user['name']} {user['position']}** (사번: `{user['emp_no']}`)")
+# 사이드바 접속자 표시 (이름+직책, 줄 바꿈 후 사번 표시)
+st.sidebar.markdown(f"👤 접속자: **{user['name']} {user['position']}**<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;(사번: `{user['emp_no']}`)", unsafe_allow_html=True)
+
 if st.sidebar.button("로그아웃"):
     st.session_state.logged_in_user = None
     st.rerun()
@@ -491,9 +493,7 @@ if menu == MENU_STOCK:
         col1.metric("전체 등록 품목 수", f"{total_count} 개")
         col2.metric("총 재고 자산 금액", f"{total_all_asset_amt:,.0f} 원")
 
-        # ---------------------------------------------------------
         # 전체 품목 엑셀 다운로드용 데이터 준비 (단위 제거 및 컬럼명 변경)
-        # ---------------------------------------------------------
         try:
             full_excel_items = []
             chunk_size = 1000
@@ -550,7 +550,6 @@ if menu == MENU_STOCK:
         col3.write("")
         col3.download_button("📥 전체 품목 엑셀 다운로드 (.xlsx)", out_excel.getvalue(), file_name=f"ERP_전체재고현황_{datetime.date.today()}.xlsx")
 
-        # 화면 표시는 기존과 같이 사용자 친화적인 포맷으로 반영
         display_df = df_stock.drop(columns=["대분류"], errors="ignore").copy()
         if "현재재고" in display_df.columns:
             display_df["현재재고"] = display_df["현재재고"].apply(lambda x: f"{x} 개")
@@ -935,7 +934,6 @@ elif menu == MENU_ITEMS:
             t = edit_opts[sel_edit]
             target_icode = t["item_code"]
 
-            # 기존 등록된 사진 미리보기 표시
             existing_photo = t.get("photo_url")
             if existing_photo:
                 st.image(existing_photo, width=150, caption="현재 등록된 사진")
@@ -962,11 +960,9 @@ elif menu == MENU_ITEMS:
 
                 e_remark = st.text_input("비고", value=safe_str_clean(t.get("remark")))
                 
-                # 사진 변경을 위한 파일 업로더 추가
                 edit_img_file = st.file_uploader("품목 사진 수정/교체 (새 사진 첨부 시 기존 사진 덮어쓰기)", type=["png", "jpg", "jpeg"], key="edit_img_file")
 
                 if st.form_submit_button("품목 정보 수정 완료"):
-                    # 새 사진이 업로드되었는지 확인 후 처리
                     new_photo_url = db.upload_item_image(edit_img_file, target_icode) if edit_img_file else t.get("photo_url")
 
                     update_payload = {
@@ -1067,7 +1063,6 @@ elif menu == MENU_HISTORY:
     except Exception:
         trans_data = []
 
-    # 전체 거래 데이터로부터 현재 재고 계산용 맵 생성
     all_trans_resp = []
     try:
         chunk_size = 1000
@@ -1096,7 +1091,6 @@ elif menu == MENU_HISTORY:
         elif ttype in ["OUT", "출고"]:
             item_calc_stock_map[ic] -= q
 
-    # 전체 품목 마스터 정보 수집
     item_info_map = {}
     try:
         chunk_size = 1000
@@ -1118,7 +1112,6 @@ elif menu == MENU_HISTORY:
     except Exception:
         pass
 
-    # 기간 및 검색어 필터링
     filtered_trans_data = []
     for t in trans_data:
         t_date_str = str(t.get("trans_date", "")).split(" ")[0]
@@ -1149,7 +1142,6 @@ elif menu == MENU_HISTORY:
         filtered_trans_data.append(t)
 
     if filtered_trans_data:
-        # 품목별(Item Code)로 집계 데이터 구성
         item_summary_map = {}
         for t in filtered_trans_data:
             icode = str(t.get("item_code", "-")).strip().upper()
@@ -1194,7 +1186,6 @@ elif menu == MENU_HISTORY:
 
         st.markdown("### 📦 품목별 입출고 집계 요약")
         
-        # 화면 표시는 단위와 콤마를 포함하여 보기 좋게 렌더링
         df_summary_display = df_summary.copy()
         df_summary_display["현재재고 / EA"] = df_summary_display["현재재고 / EA"].apply(lambda x: f"{x:,} 개")
         df_summary_display["📥 총 입고 수량 / EA"] = df_summary_display["📥 총 입고 수량 / EA"].apply(lambda x: f"{x:,} 개")
@@ -1331,10 +1322,107 @@ elif menu == MENU_RATES:
             st.rerun()
 
 # ---------------------------------------------------------
-# 메뉴 6: 사용자 관리 (관리자 전용)
+# 메뉴 6: 사용자 관리 (관리자 전용 - 생성/수정/삭제 권한 포함)
 # ---------------------------------------------------------
 elif menu == "👥 사용자 관리 (관리자)":
     st.subheader("👥 시스템 사용자 계정 관리")
-    resp = db.supabase.table("users").select("emp_no, name, position, is_admin, created_at").execute()
-    if resp.data:
-        st.dataframe(pd.DataFrame(resp.data).rename(columns={"emp_no": "사번", "name": "이름", "position": "직급", "is_admin": "관리자권한", "created_at": "등록일시"}), use_container_width=True)
+    
+    tab_u1, tab_u2, tab_u3 = st.tabs(["📋 전체 사용자 목록", "➕ 신규 사용자 등록", "✏️ 사용자 정보 수정 및 삭제"])
+
+    with tab_u1:
+        resp = db.supabase.table("users").select("emp_no, name, position, is_admin, created_at").execute()
+        if resp.data:
+            df_users = pd.DataFrame(resp.data)
+            df_users["관리자여부"] = df_users["is_admin"].apply(lambda x: "관리자 (Admin)" if x == 1 else "일반 사용자")
+            st.dataframe(
+                df_users[["emp_no", "name", "position", "관리자여부", "created_at"]].rename(
+                    columns={"emp_no": "사번", "name": "이름", "position": "직급", "created_at": "등록일시"}
+                ),
+                use_container_width=True,
+                hide_index=True
+            )
+        else:
+            st.info("등록된 사용자 정보가 없습니다.")
+
+    with tab_u2:
+        st.markdown("#### ➕ 신규 사용자 계정 추가")
+        with st.form("new_user_form", clear_on_submit=True):
+            col1, col2 = st.columns(2)
+            new_emp_no = col1.text_input("사번 (ID) *필수")
+            new_name = col2.text_input("이름 *필수")
+
+            col3, col4, col5 = st.columns(3)
+            new_pw = col3.text_input("비밀번호 (PW) *필수", type="password")
+            new_pos = col4.selectbox("직급", POSITIONS, index=4) # 기본값: 대리
+            new_is_admin = col5.selectbox("권한 설정", [0, 1], format_func=lambda x: "관리자 (Admin)" if x == 1 else "일반 사용자")
+
+            if st.form_submit_button("신규 사용자 등록"):
+                if not new_emp_no.strip() or not new_name.strip() or not new_pw.strip():
+                    st.error("❌ 사번, 이름, 비밀번호는 필수 입력 항목입니다.")
+                else:
+                    try:
+                        db.supabase.table("users").insert({
+                            "emp_no": new_emp_no.strip(),
+                            "name": new_name.strip(),
+                            "password": new_pw.strip(),
+                            "position": new_pos,
+                            "is_admin": new_is_admin
+                        }).execute()
+                        st.success(f"🎉 사용자 [{new_name} {new_pos}] 등록 완료!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"사용자 등록 중 오류 발생 (중복 사번 확인): {e}")
+
+    with tab_u3:
+        st.markdown("#### ✏️ 기존 사용자 정보 수정 및 삭제")
+        try:
+            u_resp = db.supabase.table("users").select("*").execute()
+            user_list = u_resp.data or []
+        except Exception:
+            user_list = []
+
+        if user_list:
+            user_opts = {f"[{u.get('emp_no')}] {u.get('name')} ({u.get('position')})": u for u in user_list}
+            sel_u_label = st.selectbox("수정/삭제할 사용자 선택:", list(user_opts.keys()), key="sel_user_edit")
+            target_user = user_opts[sel_u_label]
+
+            with st.form("edit_user_form"):
+                col1, col2 = st.columns(2)
+                e_u_name = col1.text_input("이름", value=target_user.get("name", ""))
+                e_u_pw = col2.text_input("새 비밀번호 (변경 시에만 입력)", value="", type="password")
+
+                col3, col4 = st.columns(2)
+                current_pos = target_user.get("position", "대리")
+                pos_idx = POSITIONS.index(current_pos) if current_pos in POSITIONS else 4
+                e_u_pos = col3.selectbox("직급", POSITIONS, index=pos_idx)
+                
+                curr_admin = target_user.get("is_admin", 0)
+                admin_idx = 0 if curr_admin == 0 else 1
+                e_u_admin = col4.selectbox("권한", [0, 1], index=admin_idx, format_func=lambda x: "관리자 (Admin)" if x == 1 else "일반 사용자")
+
+                col_b1, col_b2 = st.columns(2)
+                sub_u_update = col_b1.form_submit_button("💾 사용자 정보 수정 저장")
+                sub_u_delete = col_b2.form_submit_button("🗑️ 해당 사용자 계정 삭제")
+
+                if sub_u_update:
+                    update_data = {
+                        "name": e_u_name.strip(),
+                        "position": e_u_pos,
+                        "is_admin": e_u_admin
+                    }
+                    if e_u_pw.strip():
+                        update_data["password"] = e_u_pw.strip()
+
+                    db.supabase.table("users").update(update_data).eq("emp_no", target_user.get("emp_no")).execute()
+                    st.success("✅ 사용자 정보가 성공적으로 수정되었습니다!")
+                    st.rerun()
+
+                if sub_u_delete:
+                    if target_user.get("emp_no") == user["emp_no"]:
+                        st.error("❌ 현재 로그인 중인 본인 계정은 삭제할 수 없습니다.")
+                    else:
+                        db.supabase.table("users").delete().eq("emp_no", target_user.get("emp_no")).execute()
+                        st.success("✅ 사용자 계정이 삭제되었습니다!")
+                        st.rerun()
+        else:
+            st.info("관리할 사용자가 없습니다.")
