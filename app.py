@@ -491,20 +491,79 @@ if menu == MENU_STOCK:
         col1.metric("전체 등록 품목 수", f"{total_count} 개")
         col2.metric("총 재고 자산 금액", f"{total_all_asset_amt:,.0f} 원")
 
+        # ---------------------------------------------------------
+        # 전체 품목 엑셀 다운로드용 데이터 준비 (단위 제거 및 컬럼명 변경)
+        # ---------------------------------------------------------
+        try:
+            full_excel_items = []
+            chunk_size = 1000
+            start = 0
+            while True:
+                resp = db.supabase.table("items").select("*").range(start, start + chunk_size - 1).execute()
+                chunk_data = resp.data or []
+                full_excel_items.extend(chunk_data)
+                if len(chunk_data) < chunk_size:
+                    break
+                start += chunk_size
+        except Exception:
+            full_excel_items = all_items
+
+        excel_rows = []
+        for item in full_excel_items:
+            icode = item.get("item_code")
+            curr = safe_str_clean(item.get("currency"), "KRW")
+            base_price = safe_float(item.get("unit_price"), 0.0)
+            base_in_date = item.get("in_date", str(datetime.date.today()))
+            calc_qty = max(0, item_calc_stock_map.get(icode, 0))
+            
+            year = get_year_from_date(base_in_date)
+            rate = get_exchange_rate_by_year(curr, year)
+            unit_krw = round(base_price * rate)
+            stock_amt = round(unit_krw * calc_qty)
+
+            excel_rows.append({
+                "Lot ID": "-",
+                "품목코드": icode,
+                "품명": safe_str_clean(item.get("item_name")),
+                "상세번호": safe_str_clean(item.get("item_detail_no")),
+                "규격/모델": safe_str_clean(item.get("model_spec")),
+                "구분": safe_str_clean(item.get("category_type")),
+                "분류체계": f"{safe_str_clean(item.get('category_main'))} - {safe_str_clean(item.get('category_sub'))} - 선반:{safe_str_clean(item.get('shelf_no'))}",
+                "구역": safe_str_clean(item.get("zone")),
+                "기기명": safe_str_clean(item.get("device_name")),
+                "Maker": safe_str_clean(item.get("maker")),
+                "입고일": base_in_date,
+                "현재재고 / EA": calc_qty,
+                "화폐단위": curr,
+                "단가": base_price,
+                "원화환산액 / 원": unit_krw,
+                "재고금액 / 원": stock_amt,
+                "비고": safe_str_clean(item.get("remark"))
+            })
+
+        df_all_excel = pd.DataFrame(excel_rows)
+
         out_excel = io.BytesIO()
         with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
-            df_stock.drop(columns=["사진", "대분류"], errors="ignore").to_excel(writer, index=False, sheet_name="재고현황_검색결과")
+            df_all_excel.to_excel(writer, index=False, sheet_name="전체재고현황")
+            
         col3.write("")
-        col3.download_button("📥 현재 보기 엑셀 다운로드 (.xlsx)", out_excel.getvalue(), file_name=f"ERP_재고현황_{datetime.date.today()}.xlsx")
+        col3.download_button("📥 전체 품목 엑셀 다운로드 (.xlsx)", out_excel.getvalue(), file_name=f"ERP_전체재고현황_{datetime.date.today()}.xlsx")
+
+        # 화면 표시는 기존과 같이 사용자 친화적인 포맷으로 반영
+        display_df = df_stock.drop(columns=["대분류"], errors="ignore").copy()
+        if "현재재고" in display_df.columns:
+            display_df["현재재고"] = display_df["현재재고"].apply(lambda x: f"{x} 개")
+        if "원화환산액" in display_df.columns:
+            display_df["원화환산액"] = display_df["원화환산액"].apply(lambda x: f"{x:,} 원")
+        if "재고금액" in display_df.columns:
+            display_df["재고금액"] = display_df["재고금액"].apply(lambda x: f"{x:,} 원")
 
         selection_event = st.dataframe(
-            df_stock.drop(columns=["대분류"], errors="ignore"),
+            display_df,
             column_config={
                 "사진": st.column_config.ImageColumn("사진"),
-                "단가": st.column_config.NumberColumn(format="%,.2f"),
-                "원화환산액": st.column_config.NumberColumn(format="%d 원"),
-                "재고금액": st.column_config.NumberColumn(format="%d 원"),
-                "현재재고": st.column_config.NumberColumn(format="%d 개")
+                "단가": st.column_config.NumberColumn(format="%,.2f")
             },
             use_container_width=True,
             on_select="rerun",
@@ -1084,7 +1143,7 @@ elif menu == MENU_HISTORY:
                     "품목코드": t.get("item_code", "-"),
                     "품명": info["name"],
                     "규격/모델": info["model_spec"],
-                    "현재재고": f"{current_stock:,} 개",
+                    "현재재고": current_stock,
                     "총입고량": 0,
                     "총출고량": 0,
                     "거래건수": 0,
@@ -1108,24 +1167,32 @@ elif menu == MENU_HISTORY:
                 "품목코드": data["품목코드"],
                 "품명": data["품명"],
                 "규격/모델": data["규격/모델"],
-                "현재재고": data["현재재고"],
-                "📥 총 입고 수량": f"{data['총입고량']:,} 개",
-                "📤 총 출고 수량": f"{data['총출고량']:,} 개",
-                "거래 횟수": f"{data['거래건수']} 회"
+                "현재재고 / EA": data["현재재고"],
+                "📥 총 입고 수량 / EA": data["총입고량"],
+                "📤 총 출고 수량 / EA": data["총출고량"],
+                "거래 횟수": data["거래건수"]
             })
 
         df_summary = pd.DataFrame(summary_rows)
 
         st.markdown("### 📦 품목별 입출고 집계 요약")
+        
+        # 화면 표시는 단위와 콤마를 포함하여 보기 좋게 렌더링
+        df_summary_display = df_summary.copy()
+        df_summary_display["현재재고 / EA"] = df_summary_display["현재재고 / EA"].apply(lambda x: f"{x:,} 개")
+        df_summary_display["📥 총 입고 수량 / EA"] = df_summary_display["📥 총 입고 수량 / EA"].apply(lambda x: f"{x:,} 개")
+        df_summary_display["📤 총 출고 수량 / EA"] = df_summary_display["📤 총 출고 수량 / EA"].apply(lambda x: f"{x:,} 개")
+        df_summary_display["거래 횟수"] = df_summary_display["거래 횟수"].apply(lambda x: f"{x} 회")
+
         st.dataframe(
-            df_summary,
+            df_summary_display,
             column_config={
                 "품목코드": st.column_config.TextColumn("품목코드", width="small"),
                 "품명": st.column_config.TextColumn("품명", width="medium"),
                 "규격/모델": st.column_config.TextColumn("규격/모델", width="medium"),
-                "현재재고": st.column_config.TextColumn("현재재고", width="small"),
-                "📥 총 입고 수량": st.column_config.TextColumn("📥 총 입고 수량", width="small"),
-                "📤 총 출고 수량": st.column_config.TextColumn("📤 총 출고 수량", width="small"),
+                "현재재고 / EA": st.column_config.TextColumn("현재재고", width="small"),
+                "📥 총 입고 수량 / EA": st.column_config.TextColumn("📥 총 입고 수량", width="small"),
+                "📤 총 출고 수량 / EA": st.column_config.TextColumn("📤 총 출고 수량", width="small"),
                 "거래 횟수": st.column_config.TextColumn("거래 횟수", width="small")
             },
             use_container_width=True,
