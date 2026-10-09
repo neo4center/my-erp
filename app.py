@@ -991,6 +991,35 @@ elif menu == MENU_HISTORY:
     except Exception:
         trans_data = []
 
+    # 전체 거래 데이터로부터 현재 재고 계산용 맵 생성
+    all_trans_resp = []
+    try:
+        chunk_size = 1000
+        start = 0
+        while True:
+            resp = db.supabase.table("stock_transactions").select("item_code, trans_type, quantity").range(start, start + chunk_size - 1).execute()
+            chunk_data = resp.data or []
+            all_trans_resp.extend(chunk_data)
+            if len(chunk_data) < chunk_size:
+                break
+            start += chunk_size
+    except Exception:
+        all_trans_resp = []
+
+    item_calc_stock_map = {}
+    for t in all_trans_resp:
+        ic = t.get("item_code")
+        if not ic:
+            continue
+        q = safe_int_clean(t.get("quantity"), 0)
+        ttype = str(t.get("trans_type", "")).strip().upper()
+        if ic not in item_calc_stock_map:
+            item_calc_stock_map[ic] = 0
+        if ttype in ["IN", "입고"]:
+            item_calc_stock_map[ic] += q
+        elif ttype in ["OUT", "출고"]:
+            item_calc_stock_map[ic] -= q
+
     # 전체 품목 마스터 정보 수집
     item_info_map = {}
     try:
@@ -1050,10 +1079,12 @@ elif menu == MENU_HISTORY:
             icode = str(t.get("item_code", "-")).strip().upper()
             if icode not in item_summary_map:
                 info = item_info_map.get(icode, {"name": "-", "model_spec": "-", "detail_no": "-"})
+                current_stock = max(0, item_calc_stock_map.get(t.get("item_code", "-"), 0))
                 item_summary_map[icode] = {
                     "품목코드": t.get("item_code", "-"),
                     "품명": info["name"],
                     "규격/모델": info["model_spec"],
+                    "현재재고": f"{current_stock:,} 개",
                     "총입고량": 0,
                     "총출고량": 0,
                     "거래건수": 0,
@@ -1073,15 +1104,14 @@ elif menu == MENU_HISTORY:
 
         summary_rows = []
         for icode, data in item_summary_map.items():
-            net_change = data["총입고량"] - data["총출고량"]
             summary_rows.append({
                 "품목코드": data["품목코드"],
                 "품명": data["품명"],
                 "규격/모델": data["규격/모델"],
-                "총 입고 수량": f"{data['총입고량']:,} 개",
-                "총 출고 수량": f"{data['총출고량']:,} 개",
-                "증감 수량 (입고-출고)": f"{net_change:,} 개",
-                "운영 거래 횟수": f"{data['거래건수']} 회"
+                "현재재고": data["현재재고"],
+                "📥 총 입고 수량": f"{data['총입고량']:,} 개",
+                "📤 총 출고 수량": f"{data['총출고량']:,} 개",
+                "거래 횟수": f"{data['거래건수']} 회"
             })
 
         df_summary = pd.DataFrame(summary_rows)
@@ -1093,10 +1123,10 @@ elif menu == MENU_HISTORY:
                 "품목코드": st.column_config.TextColumn("품목코드", width="small"),
                 "품명": st.column_config.TextColumn("품명", width="medium"),
                 "규격/모델": st.column_config.TextColumn("규격/모델", width="medium"),
-                "총 입고 수량": st.column_config.TextColumn("총 입고 수량", width="small"),
-                "총 출고 수량": st.column_config.TextColumn("총 출고 수량", width="small"),
-                "증감 수량 (입고-출고)": st.column_config.TextColumn("증감 수량", width="small"),
-                "운영 거래 횟수": st.column_config.TextColumn("거래 횟수", width="small")
+                "현재재고": st.column_config.TextColumn("현재재고", width="small"),
+                "📥 총 입고 수량": st.column_config.TextColumn("📥 총 입고 수량", width="small"),
+                "📤 총 출고 수량": st.column_config.TextColumn("📤 총 출고 수량", width="small"),
+                "거래 횟수": st.column_config.TextColumn("거래 횟수", width="small")
             },
             use_container_width=True,
             hide_index=True
@@ -1105,8 +1135,7 @@ elif menu == MENU_HISTORY:
         st.markdown("---")
         st.markdown("### 📋 품목별 상세 입출고 이력")
         
-        # 품목별 아코디언(또는selectbox)으로 상세 내역 확인
-        item_options = {f"[{data['품목코드금융'] if '품목코드금융' in data else data['품목코드']}] {data['품명']} (입고:{data['총입고량']}개 / 출고:{data['총출고량']}개)": icode for icode, data in item_summary_map.items()}
+        item_options = {f"[{data['품목코드']}] {data['품명']} (입고:{data['총입고량']}개 / 출고:{data['총출고량']}개)": icode for icode, data in item_summary_map.items()}
         selected_item_label = st.selectbox("🔎 상세 내역을 확인할 품목 선택:", list(item_options.keys()))
         
         if selected_item_label:
@@ -1151,8 +1180,34 @@ elif menu == MENU_HISTORY:
                 })
 
             df_detail = pd.DataFrame(detail_rows)
+
+            def highlight_trans_type(row):
+                val = str(row.get("구분", ""))
+                if "입고" in val or "IN" in val:
+                    return ['background-color: #E8F5E9; color: #1B5E20; font-weight: bold;'] * len(row)
+                elif "출고" in val or "OUT" in val:
+                    return ['background-color: #FFEBEE; color: #B71C1C; font-weight: bold;'] * len(row)
+                return [''] * len(row)
+
+            styled_detail_df = df_detail.style.apply(highlight_trans_type, axis=1)
+
             st.markdown(f"**선택 품목:** `[{selected_icode}] {target_summary['품명']}` (규격: {target_summary['규격/모델']})")
-            st.dataframe(df_detail, use_container_width=True, hide_index=True)
+            st.dataframe(
+                styled_detail_df,
+                column_config={
+                    "No": st.column_config.NumberColumn("No", width="small", format="%d"),
+                    "일자": st.column_config.TextColumn("일자", width="small"),
+                    "구분": st.column_config.TextColumn("구분", width="small"),
+                    "수량": st.column_config.TextColumn("수량", width="small"),
+                    "원화환산액": st.column_config.TextColumn("원화환산액", width="small"),
+                    "총금액": st.column_config.TextColumn("총금액", width="small"),
+                    "담당자": st.column_config.TextColumn("담당자", width="small"),
+                    "요청자": st.column_config.TextColumn("요청자", width="small"),
+                    "비고": st.column_config.TextColumn("비고", width="medium")
+                },
+                use_container_width=True,
+                hide_index=True
+            )
 
         st.markdown("---")
         col_down1, col_down2 = st.columns([2, 2])
