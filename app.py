@@ -287,7 +287,7 @@ if st.session_state.logged_in_user is None:
 user = st.session_state.logged_in_user
 st.title("🏭 광주오포센터 자동화 ERP")
 
-# 사이드바 접속자 표시 (이름+직책, 줄 바꿈 후 사번 표시)
+# 접속자 표시 (이름+직책, 줄 바꿈 후 사번 표시)
 st.sidebar.markdown(f"👤 접속자: **{user['name']} {user['position']}**<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;(사번: `{user['emp_no']}`)", unsafe_allow_html=True)
 
 if st.sidebar.button("로그아웃"):
@@ -370,7 +370,8 @@ if menu == MENU_STOCK:
                 kw = search_kw.strip()
                 sub_query = sub_query.or_(f"item_code.ilike.%{kw}%,item_name.ilike.%{kw}%,item_detail_no.ilike.%{kw}%,model_spec.ilike.%{kw}%,remark.ilike.%{kw}%")
             
-            resp = sub_query.range(start, start + chunk_size - 1).execute()
+            # 품목코드 오름차순 정렬 적용 (.order)
+            resp = sub_query.order("item_code", desc=False).range(start, start + chunk_size - 1).execute()
             chunk_data = resp.data or []
             all_items.extend(chunk_data)
             
@@ -389,7 +390,8 @@ if menu == MENU_STOCK:
                 start_idx = (current_stock_page - 1) * PAGE_SIZE_STOCK
                 end_idx = start_idx + PAGE_SIZE_STOCK - 1
                 
-                items_resp = db.supabase.table("items").select("*").range(start_idx, end_idx).execute()
+                # 품목코드 오름차순 정렬 적용 (.order)
+                items_resp = db.supabase.table("items").select("*").order("item_code", desc=False).range(start_idx, end_idx).execute()
                 all_items = items_resp.data or []
                 break
     except Exception:
@@ -493,13 +495,12 @@ if menu == MENU_STOCK:
         col1.metric("전체 등록 품목 수", f"{total_count} 개")
         col2.metric("총 재고 자산 금액", f"{total_all_asset_amt:,.0f} 원")
 
-        # 전체 품목 엑셀 다운로드용 데이터 준비 (단위 제거 및 컬럼명 변경)
         try:
             full_excel_items = []
             chunk_size = 1000
             start = 0
             while True:
-                resp = db.supabase.table("items").select("*").range(start, start + chunk_size - 1).execute()
+                resp = db.supabase.table("items").select("*").order("item_code", desc=False).range(start, start + chunk_size - 1).execute()
                 chunk_data = resp.data or []
                 full_excel_items.extend(chunk_data)
                 if len(chunk_data) < chunk_size:
@@ -598,7 +599,7 @@ elif menu == MENU_TRANS:
         search_kw_trans = st.text_input("🔍 대상 품목 통합 검색 (품명, 코드, 상세번호, 규격, 비고 등)", "", key="trans_search_box")
         
         try:
-            t_query = db.supabase.table("items").select("*")
+            t_query = db.supabase.table("items").select("*").order("item_code", desc=False)
             if search_kw_trans.strip():
                 kw = search_kw_trans.strip()
                 t_query = t_query.or_(f"item_code.ilike.%{kw}%,item_name.ilike.%{kw}%,item_detail_no.ilike.%{kw}%,model_spec.ilike.%{kw}%,remark.ilike.%{kw}%")
@@ -920,7 +921,7 @@ elif menu == MENU_ITEMS:
     with tab2:
         edit_search = st.text_input("🔍 수정할 품목 검색 (품명, 코드, 규격 등)", "", key="edit_search_box")
         try:
-            query = db.supabase.table("items").select("*")
+            query = db.supabase.table("items").select("*").order("item_code", desc=False)
             if edit_search.strip():
                 kw = edit_search.strip()
                 query = query.or_(f"item_code.ilike.%{kw}%,item_name.ilike.%{kw}%,model_spec.ilike.%{kw}%")
@@ -1096,7 +1097,7 @@ elif menu == MENU_HISTORY:
         chunk_size = 1000
         start = 0
         while True:
-            items_resp = db.supabase.table("items").select("item_code, item_name, currency, model_spec, item_detail_no").range(start, start + chunk_size - 1).execute()
+            items_resp = db.supabase.table("items").select("item_code, item_name, currency, model_spec, item_detail_no").order("item_code", desc=False).range(start, start + chunk_size - 1).execute()
             chunk_items = items_resp.data or []
             for i in chunk_items:
                 icode_key = str(i.get("item_code", "")).strip().upper()
@@ -1353,7 +1354,7 @@ elif menu == "👥 사용자 관리 (관리자)":
 
             col3, col4, col5 = st.columns(3)
             new_pw = col3.text_input("비밀번호 (PW) *필수", type="password")
-            new_pos = col4.selectbox("직급", POSITIONS, index=4) # 기본값: 대리
+            new_pos = col4.selectbox("직급", POSITIONS, index=4)
             new_is_admin = col5.selectbox("권한 설정", [0, 1], format_func=lambda x: "관리자 (Admin)" if x == 1 else "일반 사용자")
 
             if st.form_submit_button("신규 사용자 등록"):
