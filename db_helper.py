@@ -3,6 +3,7 @@ import streamlit as st
 from supabase import create_client, Client
 from PIL import Image, ImageOps
 import io
+import time
 
 SUPABASE_URL = st.secrets.get("SUPABASE_URL", os.environ.get("SUPABASE_URL", ""))
 SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", os.environ.get("SUPABASE_KEY", ""))
@@ -112,16 +113,28 @@ def upload_item_image(image_file, item_code):
         img.save(img_byte_arr, format='JPEG', quality=85)
         img_byte_arr.seek(0)
         
-        file_path = f"items/{item_code}.jpg"
+        # 5. 타임스탬프를 추가하여 브라우저/스토리지 캐시 충돌(덮어쓰기 무시 현상) 원천 방지
+        timestamp = int(time.time())
+        file_path = f"items/{item_code}_{timestamp}.jpg"
         
-        # 5. 수파베이스 스토리지 업로드
+        # 기존에 해당 품목으로 올라간 이전 파일들이 있다면 정리 (선택 사항)
+        try:
+            existing_files = supabase.storage.from_("item_images").list("items", {"search": item_code})
+            if existing_files:
+                files_to_remove = [f"items/{f['name']}" for f in existing_files if f['name'].startswith(f"{item_code}_")]
+                if files_to_remove:
+                    supabase.storage.from_("item_images").remove(files_to_remove)
+        except Exception:
+            pass
+
+        # 6. 수파베이스 스토리지 업로드
         supabase.storage.from_("item_images").upload(
             file_path, 
             img_byte_arr.getvalue(), 
             file_options={"upsert": "true", "content-type": "image/jpeg"}
         )
         
-        # 6. 공개 URL 획득
+        # 7. 공개 URL 획득
         res = supabase.storage.from_("item_images").get_public_url(file_path)
         
         if isinstance(res, dict):
