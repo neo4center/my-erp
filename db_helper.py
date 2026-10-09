@@ -1,7 +1,7 @@
 import os
 import streamlit as st
 from supabase import create_client, Client
-from PIL import Image
+from PIL import Image, ImageOps
 import io
 
 SUPABASE_URL = st.secrets.get("SUPABASE_URL", os.environ.get("SUPABASE_URL", ""))
@@ -10,10 +10,6 @@ SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", os.environ.get("SUPABASE_KEY", "")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def get_stock_by_lots():
-    """
-    호환성을 위해 유지하되, 현재고는 stock_transactions를 기준으로 계산되므로
-    이 함수는 단순 참조용 Lot 목록(또는 빈 리스트)을 반환합니다.
-    """
     try:
         resp = supabase.table("stock_lots").select("*").execute()
         return resp.data or []
@@ -21,9 +17,6 @@ def get_stock_by_lots():
         return []
 
 def register_inbound_lot(item_code, item_name, category, inbound_date, unit_price, quantity, manager, requester, remark):
-    """
-    입고 발생 시 stock_transactions에 기록을 남깁니다.
-    """
     try:
         supabase.table("stock_transactions").insert({
             "item_code": item_code,
@@ -50,9 +43,6 @@ def register_inbound_lot(item_code, item_name, category, inbound_date, unit_pric
         st.error(f"입고 등록 중 오류 발생: {e}")
 
 def process_fifo_outbound(item_code, outbound_qty, trans_date, requester, manager, remark):
-    """
-    출고 발생 시 stock_transactions에 OUT 기록을 남깁니다.
-    """
     try:
         last_in = supabase.table("stock_transactions").select("unit_price").eq("item_code", item_code).eq("trans_type", "IN").order("trans_date", desc=True).limit(1).execute().data
         unit_p = last_in[0]["unit_price"] if last_in else 0
@@ -98,25 +88,40 @@ def upload_item_image(image_file, item_code):
             
         img = Image.open(image_file)
         
-        # 투명 채널(RGBA, P, LA 등)이 포함된 경우 JPEG 변환을 위해 RGB로 변환
+        # 1. 스마트폰 촬영 사진의 EXIF 회전 정보를 반영하여 올바른 방향으로 회전
+        img = ImageOps.exif_transpose(img)
+        
+        # 2. 투명 채널(RGBA, P, LA 등)이 포함된 경우 RGB로 변환
         if img.mode in ('RGBA', 'P', 'LA'):
             img = img.convert('RGB')
             
-        img.thumbnail((500, 500))
+        # 3. 세로/가로 긴 사진을 중앙 기준으로 정사각형(Center Crop) 처리
+        width, height = img.size
+        min_side = min(width, height)
+        left = (width - min_side) / 2
+        top = (height - min_side) / 2
+        right = (width + min_side) / 2
+        bottom = (height + min_side) / 2
+        
+        img = img.crop((left, top, right, bottom))
+        
+        # 4. 500x500 해상도로 리사이징
+        img = img.resize((500, 500), Image.Resampling.LANCZOS)
+        
         img_byte_arr = io.BytesIO()
         img.save(img_byte_arr, format='JPEG', quality=85)
         img_byte_arr.seek(0)
         
         file_path = f"items/{item_code}.jpg"
         
-        # 스토리지 업로드 (upsert 허용)
+        # 5. 수파베이스 스토리지 업로드
         supabase.storage.from_("item_images").upload(
             file_path, 
             img_byte_arr.getvalue(), 
             file_options={"upsert": "true", "content-type": "image/jpeg"}
         )
         
-        # 공개 URL 획득 (버전별 반환 형태 대응)
+        # 6. 공개 URL 획득
         res = supabase.storage.from_("item_images").get_public_url(file_path)
         
         if isinstance(res, dict):
