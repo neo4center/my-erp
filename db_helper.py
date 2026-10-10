@@ -28,6 +28,7 @@ def get_stock_by_lots():
 
 def register_inbound_lot(item_code, item_name, category, inbound_date, unit_price, quantity, manager, requester, remark):
     try:
+        # 1. 입출고 트랜잭션 기록
         supabase.table("stock_transactions").insert({
             "item_code": item_code,
             "trans_type": "IN",
@@ -39,6 +40,7 @@ def register_inbound_lot(item_code, item_name, category, inbound_date, unit_pric
             "remark": remark if remark else "-"
         }).execute()
 
+        # 2. 랏(Lot) 테이블 기록
         try:
             supabase.table("stock_lots").insert({
                 "item_code": item_code,
@@ -46,6 +48,15 @@ def register_inbound_lot(item_code, item_name, category, inbound_date, unit_pric
                 "unit_price": unit_price,
                 "inbound_date": inbound_date
             }).execute()
+        except Exception:
+            pass
+
+        # 3. 💡 품목 마스터(items) 테이블의 대표 단가와 입고일도 최신 입고가로 자동 갱신
+        try:
+            supabase.table("items").update({
+                "unit_price": unit_price,
+                "in_date": inbound_date
+            }).eq("item_code", item_code).execute()
         except Exception:
             pass
 
