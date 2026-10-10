@@ -218,7 +218,7 @@ def render_a4_spec_card(item_code):
                 <tr><th>구분</th><td>{clean_val(item.get('category_type'))}</td><th>분류체계</th><td>{category_full}</td></tr>
                 <tr><th>설치구역/기기</th><td>{clean_val(item.get('zone'))} / {clean_val(item.get('device_name'))}</td><th>Maker</th><td>{clean_val(item.get('maker'))}</td></tr>
                 <tr><th>화폐단위/단가</th><td>{curr} / {representative_price:,.2f}</td><th>적용 환율({representative_year}년)</th><td>{representative_rate:,.2f} 원</td></tr>
-                <tr><th>원화환산액</th><td>{unit_krw_display:,} 원</td><th>현재재고 / 재고금ек</th><td><b>{current_stock:,} 개 / {total_val_krw:,} 원</b></td></tr>
+                <tr><th>원화환산액</th><td>{unit_krw_display:,} 원</td><th>현재재고 / 재고금액</th><td><b>{current_stock:,} 개 / {total_val_krw:,} 원</b></td></tr>
                 <tr><th>비고</th><td colspan="3">{clean_val(item.get('remark'))}</td></tr>
             </table>
             """
@@ -287,7 +287,6 @@ if st.session_state.logged_in_user is None:
 user = st.session_state.logged_in_user
 st.title("🏭 광주오포센터 자동화 ERP")
 
-# 접속자 표시 (이름+직책, 줄 바꿈 후 사번 표시)
 st.sidebar.markdown(f"👤 접속자: **{user['name']} {user['position']}**<br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;(사번: `{user['emp_no']}`)", unsafe_allow_html=True)
 
 if st.sidebar.button("로그아웃"):
@@ -308,7 +307,7 @@ if user.get("is_admin") == 1:
 menu = st.sidebar.radio("메뉴 이동:", menu_list)
 
 # ---------------------------------------------------------
-# 메뉴 1: 재고 현황판 (품목코드 오름차순 정렬 적용)
+# 메뉴 1: 재고 현황판
 # ---------------------------------------------------------
 if menu == MENU_STOCK:
     st.subheader("📊 현재 품목별/Lot별 재고 현황판 (초기재고 0개 포함)")
@@ -586,7 +585,7 @@ if menu == MENU_STOCK:
         st.info("조건에 일치하는 품목 데이터가 없습니다.")
 
 # ---------------------------------------------------------
-# 메뉴 2: 입출고 등록
+# 메뉴 2: 입출고 등록 (입고/출고 구분 판정 로직 수정 완료)
 # ---------------------------------------------------------
 elif menu == MENU_TRANS:
     st.subheader("📝 자재 입출고 등록 및 이력 관리")
@@ -642,7 +641,8 @@ elif menu == MENU_TRANS:
                 """, unsafe_allow_html=True)
 
                 col1, col2 = st.columns(2)
-                trans_type = col1.radio("입출고 구분", ["📥  입 고 (IN)", "📤  출 고 (OUT)"], horizontal=True)
+                # 명확하게 옵션 값을 분리하고 기본값을 '입고'로 설정
+                trans_type = col1.radio("입출고 구분", ["입고", "출고"], index=0, horizontal=True)
                 trans_date = col2.date_input("일자", datetime.date.today())
 
                 col3, col4 = st.columns(2)
@@ -661,7 +661,8 @@ elif menu == MENU_TRANS:
                     if not requester:
                         st.error("요청자는 필수 입력 항목입니다.")
                     else:
-                        parsed_type = "입고" if "입고" in trans_type else "출고"
+                        # 라디오 선택값에 따라 정확히 분기
+                        parsed_type = "입고" if trans_type == "입고" else "출고"
                         st.session_state.trans_form_data = {
                             "item_code": item_code,
                             "item_name": target_item["item_name"],
@@ -692,6 +693,7 @@ elif menu == MENU_TRANS:
                 st.markdown("---")
                 st.write(f"- **품목코드:** `{data.get('item_code')}`")
                 st.write(f"- **품명:** **{data.get('item_name')}**")
+                st.write(f"- **구분:** **{t_type}**")
                 st.write(f"- **수량:** {data.get('quantity'):,} 개")
                 st.write(f"- **적용단가:** {data.get('unit_price'):,.2f} {data.get('currency')}")
                 st.write(f"- **요청자:** {data.get('requester')}")
@@ -722,7 +724,7 @@ elif menu == MENU_TRANS:
                                 requester=data.get("requester"),
                                 manager=data.get("manager"),
                                 remark=data.get("remark"),
-                                unit_price=data.get("unit_price")  # 사용자가 입력한 단가 전달
+                                unit_price=data.get("unit_price")
                             )
                             st.success(f"✅ [{data.get('item_code')}] {data.get('quantity')}개 출고 처리 완료!")
                         
