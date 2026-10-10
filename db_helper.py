@@ -4,11 +4,20 @@ from supabase import create_client, Client
 from PIL import Image, ImageOps
 import io
 import time
+import pandas as pd
 
 SUPABASE_URL = st.secrets.get("SUPABASE_URL", os.environ.get("SUPABASE_URL", ""))
 SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", os.environ.get("SUPABASE_KEY", ""))
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+def safe_float(val, default=0.0):
+    if pd.isna(val) or val is None:
+        return default
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return default
 
 def get_stock_by_lots():
     try:
@@ -43,16 +52,19 @@ def register_inbound_lot(item_code, item_name, category, inbound_date, unit_pric
     except Exception as e:
         st.error(f"입고 등록 중 오류 발생: {e}")
 
-def process_fifo_outbound(item_code, outbound_qty, trans_date, requester, manager, remark):
+def process_fifo_outbound(item_code, outbound_qty, trans_date, requester, manager, remark, unit_price=0):
     try:
-        last_in = supabase.table("stock_transactions").select("unit_price").eq("item_code", item_code).eq("trans_type", "IN").order("trans_date", desc=True).limit(1).execute().data
-        unit_p = last_in[0]["unit_price"] if last_in else 0
+        # 사용자가 입력한 단가가 있으면 해당 단가를 우선 적용, 없으면 기존 방식대로 최근 입고 단가 조회
+        final_unit_price = float(unit_price) if unit_price is not None and float(unit_price) > 0 else 0
+        if final_unit_price == 0:
+            last_in = supabase.table("stock_transactions").select("unit_price").eq("item_code", item_code).eq("trans_type", "IN").order("trans_date", desc=True).limit(1).execute().data
+            final_unit_price = safe_float(last_in[0]["unit_price"]) if last_in else 0
 
         supabase.table("stock_transactions").insert({
             "item_code": item_code,
             "trans_type": "OUT",
             "quantity": outbound_qty,
-            "unit_price": unit_p,
+            "unit_price": final_unit_price,
             "trans_date": trans_date,
             "requester": requester if requester else "출고담당자",
             "manager": manager if manager else "최광호",
@@ -89,14 +101,14 @@ def upload_item_image(image_file, item_code):
             
         img = Image.open(image_file)
         
-        # 1. 스마트폰 촬영 사진의 EXIF 회전 정보를 반영하여 올바른 방향으로 회전
+        # 1. 스마트폰 촬영 사진 EXIF 회전 정보 반영
         img = ImageOps.exif_transpose(img)
         
-        # 2. 투명 채널(RGBA, P, LA 등)이 포함된 경우 RGB로 변환
+        # 2. 투명 채널 포함된 경우 RGB 변환
         if img.mode in ('RGBA', 'P', 'LA'):
             img = img.convert('RGB')
             
-        # 3. 세로/가로 긴 사진을 중앙 기준으로 정사각형(Center Crop) 처리
+        # 3. 중앙 기준 정사각형(Center Crop) 처리
         width, height = img.size
         min_side = min(width, height)
         left = (width - min_side) / 2
@@ -106,18 +118,17 @@ def upload_item_image(image_file, item_code):
         
         img = img.crop((left, top, right, bottom))
         
-        # 4. 500x500 해상도로 리사이징
+        # 4. 500x500 해상도 리사이징
         img = img.resize((500, 500), Image.Resampling.LANCZOS)
         
         img_byte_arr = io.BytesIO()
         img.save(img_byte_arr, format='JPEG', quality=85)
         img_byte_arr.seek(0)
         
-        # 5. 타임스탬프를 추가하여 브라우저/스토리지 캐시 충돌(덮어쓰기 무시 현상) 원천 방지
+        # 5. 타임스탬프 적용 및 기존 품목 이미지 정리 (캐시 덮어쓰기 문제 해결)
         timestamp = int(time.time())
         file_path = f"items/{item_code}_{timestamp}.jpg"
         
-        # 기존에 해당 품목으로 올라간 이전 파일들이 있다면 정리 (선택 사항)
         try:
             existing_files = supabase.storage.from_("item_images").list("items", {"search": item_code})
             if existing_files:
