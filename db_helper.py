@@ -54,7 +54,6 @@ def register_inbound_lot(item_code, item_name, category, inbound_date, unit_pric
 
 def process_fifo_outbound(item_code, outbound_qty, trans_date, requester, manager, remark, unit_price=0):
     try:
-        # 사용자가 입력한 단가가 있으면 해당 단가를 우선 적용, 없으면 기존 방식대로 최근 입고 단가 조회
         final_unit_price = float(unit_price) if unit_price is not None and float(unit_price) > 0 else 0
         if final_unit_price == 0:
             last_in = supabase.table("stock_transactions").select("unit_price").eq("item_code", item_code).eq("trans_type", "IN").order("trans_date", desc=True).limit(1).execute().data
@@ -100,15 +99,11 @@ def upload_item_image(image_file, item_code):
             return None
             
         img = Image.open(image_file)
-        
-        # 1. 스마트폰 촬영 사진 EXIF 회전 정보 반영
         img = ImageOps.exif_transpose(img)
         
-        # 2. 투명 채널 포함된 경우 RGB 변환
         if img.mode in ('RGBA', 'P', 'LA'):
             img = img.convert('RGB')
             
-        # 3. 중앙 기준 정사각형(Center Crop) 처리
         width, height = img.size
         min_side = min(width, height)
         left = (width - min_side) / 2
@@ -117,15 +112,12 @@ def upload_item_image(image_file, item_code):
         bottom = (height + min_side) / 2
         
         img = img.crop((left, top, right, bottom))
-        
-        # 4. 500x500 해상도 리사이징
         img = img.resize((500, 500), Image.Resampling.LANCZOS)
         
         img_byte_arr = io.BytesIO()
         img.save(img_byte_arr, format='JPEG', quality=85)
         img_byte_arr.seek(0)
         
-        # 5. 타임스탬프 적용 및 기존 품목 이미지 정리 (캐시 덮어쓰기 문제 해결)
         timestamp = int(time.time())
         file_path = f"items/{item_code}_{timestamp}.jpg"
         
@@ -138,16 +130,13 @@ def upload_item_image(image_file, item_code):
         except Exception:
             pass
 
-        # 6. 수파베이스 스토리지 업로드
         supabase.storage.from_("item_images").upload(
             file_path, 
             img_byte_arr.getvalue(), 
             file_options={"upsert": "true", "content-type": "image/jpeg"}
         )
         
-        # 7. 공개 URL 획득
         res = supabase.storage.from_("item_images").get_public_url(file_path)
-        
         if isinstance(res, dict):
             public_url = res.get("publicUrl") or res.get("data", {}).get("publicUrl")
         else:
