@@ -218,7 +218,7 @@ def render_a4_spec_card(item_code):
                 <tr><th>구분</th><td>{clean_val(item.get('category_type'))}</td><th>분류체계</th><td>{category_full}</td></tr>
                 <tr><th>설치구역/기기</th><td>{clean_val(item.get('zone'))} / {clean_val(item.get('device_name'))}</td><th>Maker</th><td>{clean_val(item.get('maker'))}</td></tr>
                 <tr><th>화폐단위/단가</th><td>{curr} / {representative_price:,.2f}</td><th>적용 환율({representative_year}년)</th><td>{representative_rate:,.2f} 원</td></tr>
-                <tr><th>원화환산액</th><td>{unit_krw_display:,} 원</td><th>현재재고 / 재고금액</th><td><b>{current_stock:,} 개 / {total_val_krw:,} 원</b></td></tr>
+                <tr><th>원화환산액</th><td>{unit_krw_display:,} 원</td><th>현재재고 / 재고금ек</th><td><b>{current_stock:,} 개 / {total_val_krw:,} 원</b></td></tr>
                 <tr><th>비고</th><td colspan="3">{clean_val(item.get('remark'))}</td></tr>
             </table>
             """
@@ -308,7 +308,7 @@ if user.get("is_admin") == 1:
 menu = st.sidebar.radio("메뉴 이동:", menu_list)
 
 # ---------------------------------------------------------
-# 메뉴 1: 재고 현황판
+# 메뉴 1: 재고 현황판 (품목코드 오름차순 정렬 적용)
 # ---------------------------------------------------------
 if menu == MENU_STOCK:
     st.subheader("📊 현재 품목별/Lot별 재고 현황판 (초기재고 0개 포함)")
@@ -370,7 +370,6 @@ if menu == MENU_STOCK:
                 kw = search_kw.strip()
                 sub_query = sub_query.or_(f"item_code.ilike.%{kw}%,item_name.ilike.%{kw}%,item_detail_no.ilike.%{kw}%,model_spec.ilike.%{kw}%,remark.ilike.%{kw}%")
             
-            # 품목코드 오름차순 정렬 적용 (.order)
             resp = sub_query.order("item_code", desc=False).range(start, start + chunk_size - 1).execute()
             chunk_data = resp.data or []
             all_items.extend(chunk_data)
@@ -390,7 +389,6 @@ if menu == MENU_STOCK:
                 start_idx = (current_stock_page - 1) * PAGE_SIZE_STOCK
                 end_idx = start_idx + PAGE_SIZE_STOCK - 1
                 
-                # 품목코드 오름차순 정렬 적용 (.order)
                 items_resp = db.supabase.table("items").select("*").order("item_code", desc=False).range(start_idx, end_idx).execute()
                 all_items = items_resp.data or []
                 break
@@ -723,7 +721,8 @@ elif menu == MENU_TRANS:
                                 trans_date=data.get("trans_date"),
                                 requester=data.get("requester"),
                                 manager=data.get("manager"),
-                                remark=data.get("remark")
+                                remark=data.get("remark"),
+                                unit_price=data.get("unit_price")  # 사용자가 입력한 단가 전달
                             )
                             st.success(f"✅ [{data.get('item_code')}] {data.get('quantity')}개 출고 처리 완료!")
                         
@@ -1323,7 +1322,7 @@ elif menu == MENU_RATES:
             st.rerun()
 
 # ---------------------------------------------------------
-# 메뉴 6: 사용자 관리 (관리자 전용 - 생성/수정/삭제 권한 포함)
+# 메뉴 6: 사용자 관리 (관리자 전용)
 # ---------------------------------------------------------
 elif menu == "👥 사용자 관리 (관리자)":
     st.subheader("👥 시스템 사용자 계정 관리")
