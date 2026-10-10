@@ -126,8 +126,22 @@ def render_a4_spec_card(item_code):
     base_price = safe_float(item.get("unit_price"), 0.0)
     base_in_date = item.get("in_date", str(datetime.date.today()))
     
-    representative_price = base_price
-    representative_year = get_year_from_date(base_in_date)
+    # 💡 최신(마지막) 입고일 및 입고 단가 산정 로직
+    latest_in_price = base_price
+    latest_in_date = base_in_date
+    
+    for t in trans_data:
+        t_type = str(t.get("trans_type", "")).strip().upper()
+        if t_type in ["IN", "입고"]:
+            t_date = t.get("trans_date", "")
+            t_price = safe_float(t.get("unit_price"), 0.0)
+            if t_date and t_price > 0:
+                if t_date >= latest_in_date:
+                    latest_in_date = t_date
+                    latest_in_price = t_price
+
+    representative_price = latest_in_price
+    representative_year = get_year_from_date(latest_in_date)
     representative_rate = get_exchange_rate_by_year(curr, representative_year)
 
     for t in trans_data:
@@ -585,7 +599,7 @@ if menu == MENU_STOCK:
         st.info("조건에 일치하는 품목 데이터가 없습니다.")
 
 # ---------------------------------------------------------
-# 메뉴 2: 입출고 등록 (입고/출고 구분 판정 로직 수정 완료)
+# 메뉴 2: 입출고 등록
 # ---------------------------------------------------------
 elif menu == MENU_TRANS:
     st.subheader("📝 자재 입출고 등록 및 이력 관리")
@@ -641,7 +655,6 @@ elif menu == MENU_TRANS:
                 """, unsafe_allow_html=True)
 
                 col1, col2 = st.columns(2)
-                # 명확하게 옵션 값을 분리하고 기본값을 '입고'로 설정
                 trans_type = col1.radio("입출고 구분", ["입고", "출고"], index=0, horizontal=True)
                 trans_date = col2.date_input("일자", datetime.date.today())
 
@@ -661,7 +674,6 @@ elif menu == MENU_TRANS:
                     if not requester:
                         st.error("요청자는 필수 입력 항목입니다.")
                     else:
-                        # 라디오 선택값에 따라 정확히 분기
                         parsed_type = "입고" if trans_type == "입고" else "출고"
                         st.session_state.trans_form_data = {
                             "item_code": item_code,
