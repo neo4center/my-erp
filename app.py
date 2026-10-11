@@ -126,7 +126,6 @@ def render_a4_spec_card(item_code):
     base_price = safe_float(item.get("unit_price"), 0.0)
     base_in_date = clean_date(item.get("in_date", str(datetime.date.today())))
     
-    # 💡 최신(마지막) 입고일 및 입고 단가 산정 로직 (날짜 정규화 적용)
     latest_in_price = base_price
     latest_in_date = base_in_date
     
@@ -599,7 +598,7 @@ if menu == MENU_STOCK:
         st.info("조건에 일치하는 품목 데이터가 없습니다.")
 
 # ---------------------------------------------------------
-# 메뉴 2: 입출고 등록
+# 메뉴 2: 입출고 등록 (페이징 추가)
 # ---------------------------------------------------------
 elif menu == MENU_TRANS:
     st.subheader("📝 자재 입출고 등록 및 이력 관리")
@@ -610,20 +609,42 @@ elif menu == MENU_TRANS:
         search_kw_trans = st.text_input("🔍 대상 품목 통합 검색 (품명, 코드, 상세번호, 규격, 비고 등)", "", key="trans_search_box")
         
         try:
+            count_q = db.supabase.table("items").select("item_code", count="exact")
+            if search_kw_trans.strip():
+                kw = search_kw_trans.strip()
+                count_q = count_q.or_(f"item_code.ilike.%{kw}%,item_name.ilike.%{kw}%,item_detail_no.ilike.%{kw}%,model_spec.ilike.%{kw}%,remark.ilike.%{kw}%")
+            cnt_resp = count_q.execute()
+            total_trans_items = cnt_resp.count if hasattr(cnt_resp, "count") and cnt_resp.count is not None else 1000
+        except Exception:
+            total_trans_items = 1000
+
+        PAGE_SIZE_TRANS = 100
+        total_trans_pages = max(1, math.ceil(total_trans_items / PAGE_SIZE_TRANS))
+
+        # 검색어가 없을 때만 페이지 선택 드롭박스 제공
+        selected_trans_page = 1
+        if not search_kw_trans.strip() and total_trans_pages > 1:
+            col_tp1, _ = st.columns([1, 4])
+            with col_tp1:
+                selected_trans_page = st.selectbox("📄 대상 품목 페이지 선택 (100건씩)", list(range(1, total_trans_pages + 1)), format_func=lambda x: f"{x} 페이지 (총 {total_trans_pages}페이지)", key="trans_page_select")
+
+        start_t_idx = (selected_trans_page - 1) * PAGE_SIZE_TRANS
+        end_t_idx = start_t_idx + PAGE_SIZE_TRANS - 1
+
+        try:
             t_query = db.supabase.table("items").select("*").order("item_code", desc=False)
             if search_kw_trans.strip():
                 kw = search_kw_trans.strip()
                 t_query = t_query.or_(f"item_code.ilike.%{kw}%,item_name.ilike.%{kw}%,item_detail_no.ilike.%{kw}%,model_spec.ilike.%{kw}%,remark.ilike.%{kw}%")
-            items_list = t_query.limit(100).execute().data or []
+                items_list = t_query.limit(100).execute().data or []
+            else:
+                items_list = t_query.range(start_t_idx, end_t_idx).execute().data or []
         except Exception:
             items_list = []
 
         if not items_list:
             st.warning("조건에 일치하는 품목이 없습니다. 검색어를 다시 확인해 주세요.")
         else:
-            if not search_kw_trans.strip():
-                st.info("💡 데이터가 많아 기본적으로 상위 100개 품목을 표시합니다. 찾으시는 품목이 없다면 위 검색창에 품명이나 코드를 입력해 주세요.")
-
             item_opts = {f"[{i['item_code']}] {i['item_name']} (상세: {i.get('item_detail_no','-')}, 규격: {i.get('model_spec','-')})": i for i in items_list}
             
             selected_label = st.selectbox("🎯 대상 품목 선택", list(item_opts.keys()), key="trans_select")
@@ -844,7 +865,7 @@ elif menu == MENU_TRANS:
             st.info("선택한 기간 또는 검색 조건에 일치하는 입출고 내역이 없습니다.")
 
 # ---------------------------------------------------------
-# 메뉴 3: 품목 관리
+# 메뉴 3: 품목 관리 (페이징 추가)
 # ---------------------------------------------------------
 elif menu == MENU_ITEMS:
     st.subheader("🏷️ 품목 등록 및 수정 관리")
@@ -933,12 +954,37 @@ elif menu == MENU_ITEMS:
 
     with tab2:
         edit_search = st.text_input("🔍 수정할 품목 검색 (품명, 코드, 규격 등)", "", key="edit_search_box")
+        
+        try:
+            cnt_q2 = db.supabase.table("items").select("item_code", count="exact")
+            if edit_search.strip():
+                kw = edit_search.strip()
+                cnt_q2 = cnt_q2.or_(f"item_code.ilike.%{kw}%,item_name.ilike.%{kw}%,model_spec.ilike.%{kw}%")
+            cnt_resp2 = cnt_q2.execute()
+            total_edit_items = cnt_resp2.count if hasattr(cnt_resp2, "count") and cnt_resp2.count is not None else 1000
+        except Exception:
+            total_edit_items = 1000
+
+        PAGE_SIZE_EDIT = 100
+        total_edit_pages = max(1, math.ceil(total_edit_items / PAGE_SIZE_EDIT))
+
+        selected_edit_page = 1
+        if not edit_search.strip() and total_edit_pages > 1:
+            col_ep1, _ = st.columns([1, 4])
+            with col_ep1:
+                selected_edit_page = st.selectbox("📄 수정할 품목 페이지 선택 (100건씩)", list(range(1, total_edit_pages + 1)), format_func=lambda x: f"{x} 페이지 (총 {total_edit_pages}페이지)", key="edit_page_select")
+
+        start_e_idx = (selected_edit_page - 1) * PAGE_SIZE_EDIT
+        end_e_idx = start_e_idx + PAGE_SIZE_EDIT - 1
+
         try:
             query = db.supabase.table("items").select("*").order("item_code", desc=False)
             if edit_search.strip():
                 kw = edit_search.strip()
                 query = query.or_(f"item_code.ilike.%{kw}%,item_name.ilike.%{kw}%,model_spec.ilike.%{kw}%")
-            filtered_edit_items = query.limit(100).execute().data or []
+                filtered_edit_items = query.limit(100).execute().data or []
+            else:
+                filtered_edit_items = query.range(start_e_idx, end_e_idx).execute().data or []
         except Exception:
             filtered_edit_items = []
 
