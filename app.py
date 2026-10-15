@@ -5,6 +5,7 @@ import math
 import re
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 import db_helper as db
 
 # Streamlit 기본 설정
@@ -48,7 +49,6 @@ def clean_date(val):
     return s if len(s) >= 8 else str(datetime.date.today())
 
 def parse_standard_date(date_str):
-    """YY.MM.DD, YYYY-MM-DD 등 다양한 날짜 형식을 표준 datetime.date로 안전하게 파싱"""
     if not date_str:
         return datetime.date.today()
     s = str(date_str).strip().split("T")[0].split(" ")[0]
@@ -119,7 +119,6 @@ def render_a4_spec_card(item_code):
         return
     item = item_resp.data[0]
 
-    # id 기준 오름차순 정렬하여 시간순서 확보
     trans_resp = db.supabase.table("stock_transactions").select("*").eq("item_code", item_code).order("id", desc=False).execute()
     trans_data = trans_resp.data or []
     
@@ -137,7 +136,6 @@ def render_a4_spec_card(item_code):
     latest_in_date = base_in_date
     latest_dt_obj = parse_standard_date(base_in_date)
     
-    # 입고(IN) 데이터 중 날짜 기준 가장 최신의 단가와 날짜 확정
     for t in trans_data:
         t_type = str(t.get("trans_type", "")).strip().upper()
         if t_type in ["IN", "입고"]:
@@ -212,12 +210,15 @@ def render_a4_spec_card(item_code):
     df_out = pd.DataFrame(out_rows)
     category_full = f"{safe_str_clean(item.get('category_main'))} - {safe_str_clean(item.get('category_sub'))} - 선반:{safe_str_clean(item.get('shelf_no'))}"
 
+    # 💡 인쇄 시 표 전체가 스크롤 없이 펼쳐지도록 CSS 및 Streamlit Components 인쇄 버튼 적용
     st.markdown("""
     <style>
     @media print {
         body * { visibility: hidden; }
         #printable-spec-card, #printable-spec-card * { visibility: visible; }
         #printable-spec-card { position: absolute; left: 0; top: 0; width: 100%; border: none !important; margin: 0; padding: 10px; }
+        /* 스크롤 영역을 해제하여 모든 행이 인쇄되도록 설정 */
+        div[data-testid="stDataFrame"] div[data-baseweb="tab-panel"], div[data-testid="stDataFrame"] { max-height: none !important; overflow: visible !important; }
         .no-print { display: none !important; }
     }
     .a4-card { background-color: #ffffff; border: 2px solid #333; border-radius: 8px; padding: 25px; margin-top: 10px; color: #111; }
@@ -226,20 +227,16 @@ def render_a4_spec_card(item_code):
     .info-table th, .info-table td { border: 1px solid #ccc; padding: 8px 12px; font-size: 14px; }
     .info-table th { background-color: #f4f4f4; font-weight: bold; width: 18%; text-align: center; }
     .stock-calc-banner { background-color: #E3F2FD; border: 2px solid #2196F3; border-radius: 8px; padding: 15px; text-align: center; font-size: 18px; font-weight: bold; color: #0D47A1; margin: 20px 0; }
-    .print-btn-custom {
-        background-color: #ffffff; color: #333; border: 1px solid #ccc; padding: 10px 20px;
-        border-radius: 6px; font-weight: bold; cursor: pointer; float: right; margin-bottom: 15px;
-    }
-    .print-btn-custom:hover { background-color: #f0f0f0; border-color: #999; }
     </style>
     """, unsafe_allow_html=True)
 
-    st.markdown("""
-    <div class="no-print" style="text-align: right;">
-        <button onclick="window.print();" class="print-btn-custom">🖨️ 명세서 인쇄/PDF 저장</button>
+    # 💡 Streamlit Components 기반 확실하게 동작하는 인쇄 버튼
+    print_component_html = """
+    <div style="text-align: right; margin-bottom: 10px;">
+        <button onclick="parent.window.print();" style="background-color: #ffffff; color: #333; border: 1px solid #ccc; padding: 8px 16px; border-radius: 6px; font-weight: bold; cursor: pointer; font-family: sans-serif;">🖨️ 명세서 인쇄/PDF 저장</button>
     </div>
-    <div style="clear: both;"></div>
-    """, unsafe_allow_html=True)
+    """
+    components.html(print_component_html, height=45)
 
     with st.container():
         st.markdown("<div id='printable-spec-card' class='a4-card'>", unsafe_allow_html=True)
@@ -283,7 +280,8 @@ def render_a4_spec_card(item_code):
         col_t1_sum.markdown(f"<div style='text-align: right; padding-top: 10px; font-weight: bold; color: #1B5E20;'>합계 수량: {total_in_qty:,} 개 &nbsp;|&nbsp; 총 금액: {total_in_amt:,} 원</div>", unsafe_allow_html=True)
         
         if not df_in.empty:
-            st.dataframe(df_in, column_config={"No": st.column_config.NumberColumn("No", width="small", format="%d")}, use_container_width=True, hide_index=True)
+            # 💡 높이 제한을 없애 전체 내역이 인쇄되도록 설정
+            st.dataframe(df_in, column_config={"No": st.column_config.NumberColumn("No", width="small", format="%d")}, use_container_width=True, hide_index=True, height=min(400, (len(df_in) + 1) * 35 + 10))
         else:
             st.caption("※ 입고 내역이 없습니다.")
 
@@ -294,7 +292,8 @@ def render_a4_spec_card(item_code):
         col_t2_sum.markdown(f"<div style='text-align: right; padding-top: 10px; font-weight: bold; color: #B71C1C;'>합계 수량: {total_out_qty:,} 개 &nbsp;|&nbsp; 총 금액: {total_out_amt:,} 원</div>", unsafe_allow_html=True)
 
         if not df_out.empty:
-            st.dataframe(df_out, column_config={"No": st.column_config.NumberColumn("No", width="small", format="%d")}, use_container_width=True, hide_index=True)
+            # 💡 높이 제한을 없애 전체 내역이 인쇄되도록 설정
+            st.dataframe(df_out, column_config={"No": st.column_config.NumberColumn("No", width="small", format="%d")}, use_container_width=True, hide_index=True, height=min(400, (len(df_out) + 1) * 35 + 10))
         else:
             st.caption("※ 출고 내역이 없습니다.")
 
@@ -1407,12 +1406,7 @@ elif menu == MENU_HISTORY:
                 file_name=f"ERP_품목별입출고집계_{datetime.date.today()}.xlsx"
             )
         with col_down2:
-            st.markdown("""
-            <div style="text-align: right;">
-                <button onclick="window.print();" class="print-btn-custom">🖨️ 인쇄/PDF 저장</button>
-            </div>
-            <div style="clear: both;"></div>
-            """, unsafe_allow_html=True)
+            components.html(print_component_html, height=45)
     else:
         st.info("조건에 일치하는 운영 입출고 이력이 없습니다.")
 
