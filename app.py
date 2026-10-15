@@ -1545,20 +1545,21 @@ elif menu == MENU_HISTORY:
                     "비고": safe_str_clean(t.get("remark"), "-")
                 })
 
-            # 상단 요약 정보 표시 (총 출고수량 및 총 금액 빨간색 굵은 글씨체 / 전체기간 선택 시 현재재고 및 재고금액 파란색 굵은 글씨체 추가)
-            summary_html = f"""
-            <div style="background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 6px; padding: 12px 20px; margin-bottom: 10px; font-size: 15px;">
-                <b>선택 품목:</b> <span style="color: #2e7d32;">[{target_icode}] {target_summary['품명']}</span> (규격: {target_summary['규격_모델']})<br>
-                <span style="display: inline-block; margin-top: 6px;">
-                    🔥 <b>총 출고수량:</b> <span style="color: #D32F2F; font-weight: bold;">{calc_sub_out_qty:,} 개</span> &nbsp;|&nbsp; 
-                    💰 <b>총 금액:</b> <span style="color: #D32F2F; font-weight: bold;">{calc_sub_out_amt:,.0f} 원</span>
-            """
+            # 상단 요약 정보 표시 (태그 이스케이프 및 구조 보정)
+            out_info_html = f"🔥 <b>총 출고수량:</b> <span style='color: #D32F2F; font-weight: bold;'>{calc_sub_out_qty:,} 개</span> &nbsp;|&nbsp; 💰 <b>총 금액:</b> <span style='color: #D32F2F; font-weight: bold;'>{calc_sub_out_amt:,.0f} 원</span>"
+            
+            stock_info_html = ""
             if period_option == "전체 (2022년~)":
-                summary_html += f"""
-                    &nbsp;|&nbsp; 📦 <b>현재재고:</b> <span style="color: #1976D2; font-weight: bold;">{target_summary['현재재고']:,} 개</span> &nbsp;|&nbsp; 
-                    💵 <b>재고금액:</b> <span style="color: #1976D2; font-weight: bold;">{target_summary['재고금액']:,.0f} 원</span>
-                """
-            summary_html += "</span></div>"
+                stock_info_html = f" &nbsp;|&nbsp; 📦 <b>현재재고:</b> <span style='color: #1976D2; font-weight: bold;'>{target_summary['현재재고']:,} 개</span> &nbsp;|&nbsp; 💵 <b>재고금액:</b> <span style='color: #1976D2; font-weight: bold;'>{target_summary['재고금액']:,.0f} 원</span>"
+
+            summary_html = f"""
+            <div style="background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 6px; padding: 12px 20px; margin-bottom: 12px; font-size: 15px; color: #111;">
+                <div><b>선택 품목:</b> <span style="color: #2e7d32; font-weight: bold;">[{target_icode}] {target_summary['품명']}</span> (규격: {target_summary['규격_모델']})</div>
+                <div style="margin-top: 8px;">
+                    {out_info_html}{stock_info_html}
+                </div>
+            </div>
+            """
             st.markdown(summary_html, unsafe_allow_html=True)
 
             df_detail = pd.DataFrame(detail_rows)
