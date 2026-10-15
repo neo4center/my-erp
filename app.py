@@ -129,6 +129,7 @@ def render_a4_spec_card(item_code):
     latest_in_price = base_price
     latest_in_date = base_in_date
     
+    # 💡 입고 데이터 중 가장 최신 날짜의 단가를 추적
     for t in trans_data:
         t_type = str(t.get("trans_type", "")).strip().upper()
         if t_type in ["IN", "입고"]:
@@ -201,18 +202,32 @@ def render_a4_spec_card(item_code):
     df_out = pd.DataFrame(out_rows)
     category_full = f"{safe_str_clean(item.get('category_main'))} - {safe_str_clean(item.get('category_sub'))} - 선반:{safe_str_clean(item.get('shelf_no'))}"
 
+    # 💡 인쇄 스타일 및 자재품목명세서 출력 영역 CSS 정의
     st.markdown("""
     <style>
+    @media print {
+        body * { visibility: hidden; }
+        #printable-spec-card, #printable-spec-card * { visibility: visible; }
+        #printable-spec-card { position: absolute; left: 0; top: 0; width: 100%; border: none !important; }
+        .stButton, header, footer { display: none !important; }
+    }
     .a4-card { background-color: #ffffff; border: 2px solid #333; border-radius: 8px; padding: 25px; margin-top: 10px; color: #111; }
     .a4-header { text-align: center; border-bottom: 3px double #333; padding-bottom: 10px; margin-bottom: 20px; }
     .info-table { width: 100%; border-collapse: collapse; margin-bottom: 15px; }
     .info-table th, .info-table td { border: 1px solid #ccc; padding: 8px 12px; font-size: 14px; }
     .info-table th { background-color: #f4f4f4; font-weight: bold; width: 18%; text-align: center; }
+    .stock-calc-banner { background-color: #E3F2FD; border: 2px solid #2196F3; border-radius: 8px; padding: 15px; text-align: center; font-size: 18px; font-weight: bold; color: #0D47A1; margin: 20px 0; }
     </style>
     """, unsafe_allow_html=True)
 
+    # 💡 브라우저 인쇄/PDF 저장 버튼
+    col_prt1, col_prt2 = st.columns([4, 1])
+    with col_prt2:
+        if st.button("🖨️ 명세서 인쇄/PDF 저장", use_container_width=True):
+            st.markdown("<script>window.print();</script>", unsafe_allow_html=True)
+
     with st.container():
-        st.markdown("<div class='a4-card'>", unsafe_allow_html=True)
+        st.markdown("<div id='printable-spec-card' class='a4-card'>", unsafe_allow_html=True)
         st.markdown(f"<div class='a4-header'><h2>자재품목명세서</h2><p>발행일자: {datetime.date.today()}</p></div>", unsafe_allow_html=True)
         col_img, col_info = st.columns([1, 3])
 
@@ -231,11 +246,21 @@ def render_a4_spec_card(item_code):
                 <tr><th>구분</th><td>{clean_val(item.get('category_type'))}</td><th>분류체계</th><td>{category_full}</td></tr>
                 <tr><th>설치구역/기기</th><td>{clean_val(item.get('zone'))} / {clean_val(item.get('device_name'))}</td><th>Maker</th><td>{clean_val(item.get('maker'))}</td></tr>
                 <tr><th>화폐단위/단가</th><td>{curr} / {representative_price:,.2f}</td><th>적용 환율({representative_year}년)</th><td>{representative_rate:,.2f} 원</td></tr>
-                <tr><th>원화환산액</th><td>{unit_krw_display:,} 원</td><th>현재재고 / 재고금액</th><td><b>{current_stock:,} 개 / {total_val_krw:,} 원</b></td></tr>
+                <tr><th>원화환산액</th><td><b>{unit_krw_display:,} 원</b> (최신단가적용)</td><th>현재재고 / 재고금액</th><td><b>{current_stock:,} 개 / {total_val_krw:,} 원</b></td></tr>
                 <tr><th>비고</th><td colspan="3">{clean_val(item.get('remark'))}</td></tr>
             </table>
             """
             st.markdown(html_table, unsafe_allow_html=True)
+
+        st.markdown("---")
+
+        # 💡 재고금액 산출 강조 배너 추가 ([재고금액] : 입고총금액 - 출고총금액)
+        net_stock_valuation = total_in_amt - total_out_amt
+        st.markdown(f"""
+        <div class="stock-calc-banner">
+            📦 [재고금액 산출] : {total_in_amt:,} 원 (입고 총금액) - {total_out_amt:,} 원 (출고 총금액) = <span style="color: #D32F2F;">{net_stock_valuation:,} 원</span>
+        </div>
+        """, unsafe_allow_html=True)
 
         st.markdown("---")
         
@@ -407,7 +432,6 @@ if menu == MENU_STOCK:
     except Exception:
         all_items = []
 
-    # 검색어나 필터 사용 시 페이지네이션 변수 기본값 처리
     if search_kw.strip() or is_filtering:
         col_p_btn = st.columns([1, 2, 2])[2]
 
@@ -416,7 +440,7 @@ if menu == MENU_STOCK:
         chunk_size = 1000
         start = 0
         while True:
-            resp = db.supabase.table("stock_transactions").select("item_code, trans_type, quantity").range(start, start + chunk_size - 1).execute()
+            resp = db.supabase.table("stock_transactions").select("item_code, trans_type, quantity, unit_price, trans_date").range(start, start + chunk_size - 1).execute()
             chunk_data = resp.data or []
             all_trans_resp.extend(chunk_data)
             if len(chunk_data) < chunk_size:
@@ -426,16 +450,27 @@ if menu == MENU_STOCK:
         all_trans_resp = []
 
     item_calc_stock_map = {}
+    item_latest_price_map = {}
+    item_latest_date_map = {}
+
     for t in all_trans_resp:
         ic = t.get("item_code")
         if not ic:
             continue
         q = safe_int_clean(t.get("quantity"), 0)
         ttype = str(t.get("trans_type", "")).strip().upper()
+        t_date = clean_date(t.get("trans_date", ""))
+        t_price = safe_float(t.get("unit_price"), 0.0)
+
         if ic not in item_calc_stock_map:
             item_calc_stock_map[ic] = 0
         if ttype in ["IN", "입고"]:
             item_calc_stock_map[ic] += q
+            if t_price > 0:
+                curr_latest_date = item_latest_date_map.get(ic, "")
+                if not curr_latest_date or t_date >= curr_latest_date:
+                    item_latest_date_map[ic] = t_date
+                    item_latest_price_map[ic] = t_price
         elif ttype in ["OUT", "출고"]:
             item_calc_stock_map[ic] -= q
 
@@ -446,6 +481,9 @@ if menu == MENU_STOCK:
         base_price = safe_float(item.get("unit_price"), 0.0)
         base_in_date = clean_date(item.get("in_date", str(datetime.date.today())))
         
+        latest_price = item_latest_price_map.get(icode, base_price)
+        latest_date = item_latest_date_map.get(icode, base_in_date)
+
         category_type = safe_str_clean(item.get("category_type"))
         category_main = safe_str_clean(item.get("category_main"))
         category_full = f"{category_main} - {safe_str_clean(item.get('category_sub'))} - 선반:{safe_str_clean(item.get('shelf_no'))}"
@@ -458,9 +496,9 @@ if menu == MENU_STOCK:
 
         calc_qty = max(0, item_calc_stock_map.get(icode, 0))
         
-        year = get_year_from_date(base_in_date)
+        year = get_year_from_date(latest_date)
         rate = get_exchange_rate_by_year(curr, year)
-        unit_krw = round(base_price * rate)
+        unit_krw = round(latest_price * rate)
         stock_amt = round(unit_krw * calc_qty)
 
         table_rows.append({
@@ -476,10 +514,10 @@ if menu == MENU_STOCK:
             "구역": safe_str_clean(item.get("zone")),
             "기기명": device_name,
             "Maker": maker,
-            "입고일": base_in_date,
+            "입고일": latest_date,
             "현재재고": calc_qty,
             "화폐단위": curr,
-            "단가": base_price,
+            "단가": latest_price,
             "원화환산액": unit_krw,
             "재고금액": stock_amt,
             "비고": remark
@@ -526,11 +564,14 @@ if menu == MENU_STOCK:
             curr = safe_str_clean(item.get("currency"), "KRW")
             base_price = safe_float(item.get("unit_price"), 0.0)
             base_in_date = clean_date(item.get("in_date", str(datetime.date.today())))
+            
+            latest_price = item_latest_price_map.get(icode, base_price)
+            latest_date = item_latest_date_map.get(icode, base_in_date)
             calc_qty = max(0, item_calc_stock_map.get(icode, 0))
             
-            year = get_year_from_date(base_in_date)
+            year = get_year_from_date(latest_date)
             rate = get_exchange_rate_by_year(curr, year)
-            unit_krw = round(base_price * rate)
+            unit_krw = round(latest_price * rate)
             stock_amt = round(unit_krw * calc_qty)
             total_all_asset_amt += stock_amt
 
@@ -545,10 +586,10 @@ if menu == MENU_STOCK:
                 "구역": safe_str_clean(item.get("zone")),
                 "기기명": safe_str_clean(item.get("device_name")),
                 "Maker": safe_str_clean(item.get("maker")),
-                "입고일": base_in_date,
+                "입고일": latest_date,
                 "현재재고 / EA": calc_qty,
                 "화폐단위": curr,
-                "단가": base_price,
+                "단가": latest_price,
                 "원화환산액 / 원": unit_krw,
                 "재고금액 / 원": stock_amt,
                 "비고": safe_str_clean(item.get("remark"))
