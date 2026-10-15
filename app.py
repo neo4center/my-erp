@@ -207,56 +207,11 @@ def render_a4_spec_card(item_code):
     unit_krw_display = int(round(representative_price * representative_rate))
 
     category_full = f"{safe_str_clean(item.get('category_main'))} - {safe_str_clean(item.get('category_sub'))} - 선반:{safe_str_clean(item.get('shelf_no'))}"
+    net_stock_valuation = total_in_amt - total_out_amt
 
-    # 💡 백지 방지 및 완벽한 인쇄용 CSS 설정 (HTML 테이블 기반 렌더링 호환)
+    # 화면 표시용 CSS
     st.markdown("""
     <style>
-    @media print {
-        /* 사이드바, 헤더, 버튼, 상단 컨트롤 영역 완벽 숨김 */
-        header, footer, [data-testid="stSidebar"], [data-testid="stHeader"], div.stButton, iframe, .no-print {
-            display: none !important;
-        }
-        body, html {
-            background-color: #ffffff !important;
-            color: #000000 !important;
-            height: auto !important;
-            overflow: visible !important;
-        }
-        .main, .block-container {
-            padding: 0 !important;
-            margin: 0 !important;
-            max-width: 100% !important;
-        }
-        /* 프린트 대상 영역만 노출 */
-        body * {
-            visibility: hidden !important;
-        }
-        #printable-spec-card, #printable-spec-card * {
-            visibility: visible !important;
-        }
-        #printable-spec-card {
-            display: block !important;
-            position: absolute !important;
-            left: 0 !important;
-            top: 0 !important;
-            width: 100% !important;
-            border: none !important;
-            box-shadow: none !important;
-            margin: 0 !important;
-            padding: 10px !important;
-            background: #ffffff !important;
-        }
-        /* 인쇄 시 표 줄바꿈 최적화 및 스크롤 완전 해제 */
-        table {
-            page-break-inside: auto;
-            width: 100% !important;
-            border-collapse: collapse !important;
-        }
-        tr {
-            page-break-inside: avoid;
-            page-break-after: auto;
-        }
-    }
     .a4-card { background-color: #ffffff; border: 2px solid #333; border-radius: 8px; padding: 25px; margin-top: 10px; color: #111; }
     .a4-header { text-align: center; border-bottom: 3px double #333; padding-bottom: 10px; margin-bottom: 20px; }
     .info-table, .trans-table { width: 100%; border-collapse: collapse; margin-bottom: 15px; }
@@ -267,20 +222,115 @@ def render_a4_spec_card(item_code):
     </style>
     """, unsafe_allow_html=True)
 
-    print_component_html = """
-    <div class="no-print" style="text-align: right; margin-bottom: 10px;">
-        <button onclick="window.parent.focus(); window.parent.print();" style="background-color: #ffffff; color: #333; border: 1px solid #ccc; padding: 8px 16px; border-radius: 6px; font-weight: bold; cursor: pointer; font-family: sans-serif;">🖨️ 명세서 인쇄/PDF 저장</button>
+    # 💡 백지 현상을 100% 해결하는 독립 팝업창 인쇄 자바스크립트 생성
+    in_trs = "".join([f"<tr><td>{r['No']}</td><td>{r['일자']}</td><td>{r['구분']}</td><td>{r['수량']}</td><td>{r['원화환산액']}</td><td>{r['총금액']}</td><td>{r['담당자']}</td><td>{r['요청자']}</td><td>{r['비고']}</td></tr>" for r in in_rows]) if in_rows else "<tr><td colspan='9'>※ 입고 내역이 없습니다.</td></tr>"
+    out_trs = "".join([f"<tr><td>{r['No']}</td><td>{r['일자']}</td><td>{r['구분']}</td><td>{r['수량']}</td><td>{r['원화환산액']}</td><td>{r['총금액']}</td><td>{r['담당자']}</td><td>{r['요청자']}</td><td>{r['비고']}</td></tr>" for r in out_rows]) if out_rows else "<tr><td colspan='9'>※ 출고 내역이 없습니다.</td></tr>"
+    photo_url = item.get("photo_url")
+    img_html = f"<img src='{photo_url}' style='max-width:100%; max-height:200px; border-radius:6px;'/>" if photo_url else "<div style='background:#eef5ff; padding:40px 10px; text-align:center; color:#1976d2; font-weight:bold; border-radius:6px;'>등록된 사진 없음</div>"
+
+    print_script = f"""
+    <script>
+    function printSpecCard() {{
+        var printWindow = window.open('', '_blank', 'width=900,height=1000');
+        var htmlContent = `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>자재품목명세서 - {clean_val(item.get('item_code'))}</title>
+                <style>
+                    body {{ font-family: sans-serif; padding: 20px; color: #111; background: #fff; }}
+                    .a4-card {{ border: 2px solid #333; border-radius: 8px; padding: 25px; }}
+                    .a4-header {{ text-align: center; border-bottom: 3px double #333; padding-bottom: 10px; margin-bottom: 20px; }}
+                    .info-table, .trans-table {{ width: 100%; border-collapse: collapse; margin-bottom: 15px; }}
+                    .info-table th, .info-table td, .trans-table th, .trans-table td {{ border: 1px solid #ccc; padding: 8px 12px; font-size: 13px; text-align: center; }}
+                    .info-table th {{ background-color: #f4f4f4; font-weight: bold; width: 18%; }}
+                    .trans-table th {{ background-color: #f8f9fa; font-weight: bold; }}
+                    .stock-calc-banner {{ background-color: #E3F2FD; border: 2px solid #2196F3; border-radius: 8px; padding: 15px; text-align: center; font-size: 16px; font-weight: bold; color: #0D47A1; margin: 20px 0; }}
+                    .col-container {{ display: flex; gap: 20px; align-items: flex-start; }}
+                    .col-img {{ flex: 1; text-align: center; }}
+                    .col-info {{ flex: 3; }}
+                    @media print {{
+                        body {{ padding: 0; }}
+                        .a4-card {{ border: none; padding: 0; }}
+                    }}
+                </style>
+            </head>
+            <body>
+                <div class="a4-card">
+                    <div class="a4-header">
+                        <h2>자재품목명세서</h2>
+                        <p>발행일자: {datetime.date.today()}</p>
+                    </div>
+                    <div class="col-container">
+                        <div class="col-img">{img_html}</div>
+                        <div class="col-info">
+                            <table class="info-table">
+                                <tr><th>품목코드</th><td><code>{clean_val(item.get('item_code'))}</code></td><th>품명</th><td><b>{clean_val(item.get('item_name'))}</b></td></tr>
+                                <tr><th>상세번호</th><td>{clean_val(item.get('item_detail_no'))}</td><th>규격/모델</th><td>{clean_val(item.get('model_spec'))}</td></tr>
+                                <tr><th>구분</th><td>{clean_val(item.get('category_type'))}</td><th>분류체계</th><td>{category_full}</td></tr>
+                                <tr><th>설치구역/기기</th><td>{clean_val(item.get('zone'))} / {clean_val(item.get('device_name'))}</td><th>Maker</th><td>{clean_val(item.get('maker'))}</td></tr>
+                                <tr><th>화폐단위/단가</th><td>{curr} / {representative_price:,.2f}</td><th>적용 환율({representative_year}년)</th><td>{representative_rate:,.2f} 원</td></tr>
+                                <tr><th>원화환산액</th><td><b>{unit_krw_display:,} 원</b> (최신단가적용)</td><th>현재재고 / 재고금액</th><td><b>{current_stock:,} 개 / {total_val_krw:,} 원</b></td></tr>
+                                <tr><th>비고</th><td colspan="3">{clean_val(item.get('remark'))}</td></tr>
+                            </table>
+                        </div>
+                    </div>
+                    <hr style="margin: 20px 0; border: 0; border-top: 1px solid #ccc;"/>
+                    <div class="stock-calc-banner">
+                        📦 [재고금액 산출] : {total_in_amt:,} 원 (입고 총금액) - {total_out_amt:,} 원 (출고 총금액) = <span style="color: #D32F2F;">{net_stock_valuation:,} 원</span>
+                    </div>
+                    <hr style="margin: 20px 0; border: 0; border-top: 1px solid #ccc;"/>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                        <h3 style="margin: 0; font-size: 18px;">📥 1. 입고 내역</h3>
+                        <span style="font-weight: bold; color: #1B5E20; font-size: 14px;">합계 수량: {total_in_qty:,} 개 &nbsp;|&nbsp; 총 금액: {total_in_amt:,} 원</span>
+                    </div>
+                    <table class="trans-table">
+                        <thead>
+                            <tr style="background-color: #f8f9fa;">
+                                <th>No</th><th>일자</th><th>구분</th><th>수량</th><th>원화환산액</th><th>총금액</th><th>담당자</th><th>요청자</th><th>비고</th>
+                            </tr>
+                        </thead>
+                        <tbody>{in_trs}</tbody>
+                    </table>
+                    <hr style="margin: 20px 0; border: 0; border-top: 1px solid #ccc;"/>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                        <h3 style="margin: 0; font-size: 18px;">📤 2. 출고 내역</h3>
+                        <span style="font-weight: bold; color: #B71C1C; font-size: 14px;">합계 수량: {total_out_qty:,} 개 &nbsp;|&nbsp; 총 금액: {total_out_amt:,} 원</span>
+                    </div>
+                    <table class="trans-table">
+                        <thead>
+                            <tr style="background-color: #f8f9fa;">
+                                <th>No</th><th>일자</th><th>구분</th><th>수량</th><th>원화환산액</th><th>총금액</th><th>담당자</th><th>요청자</th><th>비고</th>
+                            </tr>
+                        </thead>
+                        <tbody>{out_trs}</tbody>
+                    </table>
+                </div>
+            </body>
+            </html>
+        `;
+        printWindow.document.write(htmlContent);
+        printWindow.document.close();
+        printWindow.focus();
+        setTimeout(function() {{
+            printWindow.print();
+            printWindow.close();
+        }}, 500);
+    }}
+    </script>
+    <div style="text-align: right; margin-bottom: 10px;">
+        <button onclick="printSpecCard();" style="background-color: #1976D2; color: #ffffff; border: none; padding: 10px 20px; border-radius: 6px; font-weight: bold; cursor: pointer; font-family: sans-serif; font-size: 14px;">🖨️ 명세서 인쇄/PDF 저장</button>
     </div>
     """
-    components.html(print_component_html, height=45)
+    components.html(print_script, height=50)
 
+    # ERP 화면 내부 출력
     with st.container():
-        st.markdown("<div id='printable-spec-card' class='a4-card'>", unsafe_allow_html=True)
+        st.markdown("<div class='a4-card'>", unsafe_allow_html=True)
         st.markdown(f"<div class='a4-header'><h2>자재품목명세서</h2><p>발행일자: {datetime.date.today()}</p></div>", unsafe_allow_html=True)
         col_img, col_info = st.columns([1, 3])
 
         with col_img:
-            photo_url = item.get("photo_url")
             if photo_url:
                 st.image(photo_url, caption=str(item.get("item_name")), use_container_width=True)
             else:
@@ -302,7 +352,6 @@ def render_a4_spec_card(item_code):
 
         st.markdown("---")
 
-        net_stock_valuation = total_in_amt - total_out_amt
         st.markdown(f"""
         <div class="stock-calc-banner">
             📦 [재고금액 산출] : {total_in_amt:,} 원 (입고 총금액) - {total_out_amt:,} 원 (출고 총금액) = <span style="color: #D32F2F;">{net_stock_valuation:,} 원</span>
@@ -311,7 +360,6 @@ def render_a4_spec_card(item_code):
 
         st.markdown("---")
         
-        # 1. 입고 내역 (인쇄 시 스크롤 없이 전체 출력되는 HTML 테이블 방식 적용)
         st.markdown(f"""
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
             <h3 style="margin: 0; font-size: 18px;">📥 1. 입고 내역</h3>
@@ -320,21 +368,9 @@ def render_a4_spec_card(item_code):
         """, unsafe_allow_html=True)
 
         if in_rows:
-            in_table_html = """
-            <table class="trans-table">
-                <thead>
-                    <tr style="background-color: #f8f9fa;">
-                        <th>No</th><th>일자</th><th>구분</th><th>수량</th><th>원화환산액</th><th>총금액</th><th>담당자</th><th>요청자</th><th>비고</th>
-                    </tr>
-                </thead>
-                <tbody>
-            """
+            in_table_html = "<table class='trans-table'><thead><tr style='background-color: #f8f9fa;'><th>No</th><th>일자</th><th>구분</th><th>수량</th><th>원화환산액</th><th>총금액</th><th>담당자</th><th>요청자</th><th>비고</th></tr></thead><tbody>"
             for r in in_rows:
-                in_table_html += f"""
-                    <tr>
-                        <td>{r['No']}</td><td>{r['일자']}</td><td>{r['구분']}</td><td>{r['수량']}</td><td>{r['원화환산액']}</td><td>{r['총금액']}</td><td>{r['담당자']}</td><td>{r['요청자']}</td><td>{r['비고']}</td>
-                    </tr>
-                """
+                in_table_html += f"<tr><td>{r['No']}</td><td>{r['일자']}</td><td>{r['구분']}</td><td>{r['수량']}</td><td>{r['원화환산액']}</td><td>{r['총금액']}</td><td>{r['담당자']}</td><td>{r['요청자']}</td><td>{r['비고']}</td></tr>"
             in_table_html += "</tbody></table>"
             st.markdown(in_table_html, unsafe_allow_html=True)
         else:
@@ -342,7 +378,6 @@ def render_a4_spec_card(item_code):
 
         st.markdown("---")
 
-        # 2. 출고 내역 (인쇄 시 스크롤 없이 전체 출력되는 HTML 테이블 방식 적용)
         st.markdown(f"""
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
             <h3 style="margin: 0; font-size: 18px;">📤 2. 출고 내역</h3>
@@ -351,21 +386,9 @@ def render_a4_spec_card(item_code):
         """, unsafe_allow_html=True)
 
         if out_rows:
-            out_table_html = """
-            <table class="trans-table">
-                <thead>
-                    <tr style="background-color: #f8f9fa;">
-                        <th>No</th><th>일자</th><th>구분</th><th>수량</th><th>원화환산액</th><th>총금액</th><th>담당자</th><th>요청자</th><th>비고</th>
-                    </tr>
-                </thead>
-                <tbody>
-            """
+            out_table_html = "<table class='trans-table'><thead><tr style='background-color: #f8f9fa;'><th>No</th><th>일자</th><th>구분</th><th>수량</th><th>원화환산액</th><th>총금액</th><th>담당자</th><th>요청자</th><th>비고</th></tr></thead><tbody>"
             for r in out_rows:
-                out_table_html += f"""
-                    <tr>
-                        <td>{r['No']}</td><td>{r['일자']}</td><td>{r['구분']}</td><td>{r['수량']}</td><td>{r['원화환산액']}</td><td>{r['총금액']}</td><td>{r['담당자']}</td><td>{r['요청자']}</td><td>{r['비고']}</td>
-                    </tr>
-                """
+                out_table_html += f"<tr><td>{r['No']}</td><td>{r['일자']}</td><td>{r['구분']}</td><td>{r['수량']}</td><td>{r['원화환산액']}</td><td>{r['총금액']}</td><td>{r['담당자']}</td><td>{r['요청자']}</td><td>{r['비고']}</td></tr>"
             out_table_html += "</tbody></table>"
             st.markdown(out_table_html, unsafe_allow_html=True)
         else:
@@ -1479,8 +1502,6 @@ elif menu == MENU_HISTORY:
                 data=out_excel.getvalue(),
                 file_name=f"ERP_품목별입출고집계_{datetime.date.today()}.xlsx"
             )
-        with col_down2:
-            components.html(print_component_html, height=45)
     else:
         st.info("조건에 일치하는 운영 입출고 이력이 없습니다.")
 
