@@ -407,6 +407,10 @@ if menu == MENU_STOCK:
     except Exception:
         all_items = []
 
+    # 검색어나 필터 사용 시 페이지네이션 변수 기본값 처리
+    if search_kw.strip() or is_filtering:
+        col_p_btn = st.columns([1, 2, 2])[2]
+
     all_trans_resp = []
     try:
         chunk_size = 1000
@@ -501,7 +505,6 @@ if menu == MENU_STOCK:
 
         current_page_asset_amt = sum(df_stock["재고금액"])
 
-        # 💡 전체 품목의 총 재고 자산 금액을 정확히 계산하기 위해 전체 아이템 조회
         try:
             full_excel_items = []
             chunk_size = 1000
@@ -561,7 +564,6 @@ if menu == MENU_STOCK:
             st.write("")
             st.download_button("📥 전체 품목 엑셀 다운로드 (.xlsx)", out_excel.getvalue(), file_name=f"ERP_전체재고현황_{datetime.date.today()}.xlsx")
 
-        # 💡 페이지 선택 드롭박스 바로 옆에 현재 페이지 자산 금액 작게 표시
         st.markdown(f"<p style='color: #666; font-size: 13px; margin-top: -10px; margin-bottom: 15px;'>📌 현재 페이지(100건) 재고 자산 금액: <b>{current_page_asset_amt:,.0f} 원</b></p>", unsafe_allow_html=True)
 
         col1, col2, _ = st.columns([2, 2, 2])
