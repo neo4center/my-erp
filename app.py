@@ -1506,63 +1506,23 @@ elif menu == MENU_HISTORY:
         st.info("조건에 일치하는 운영 입출고 이력이 없습니다.")
 
 # ---------------------------------------------------------
-# 메뉴 5: 환율 설정 (신규 환율 등록 + 기존 환율 간편 수정)
+# 메뉴 5: 환율 설정
 # ---------------------------------------------------------
 elif menu == MENU_RATES:
-    st.subheader("⚙️ 연도별 기준 환율 관리 및 수정")
-    
-    try:
-        resp = db.supabase.table("exchange_rates").select("id, year, currency, rate").order("year", desc=True).execute()
-        rates_data = resp.data or []
-    except Exception:
-        rates_data = []
+    st.subheader("⚙️ 연도별 기준 환율 관리")
+    resp = db.supabase.table("exchange_rates").select("year, currency, rate").order("year", desc=True).execute()
+    df_rates = pd.DataFrame(resp.data or [])
+    if not df_rates.empty:
+        st.dataframe(df_rates.rename(columns={"year": "연도", "currency": "화폐단위", "rate": "환율"}), use_container_width=True)
 
-    if rates_data:
-        st.markdown("#### 📋 등록된 환율 목록 (값 수정 가능)")
-        df_rates = pd.DataFrame(rates_data)
-        
-        # 보기 편하게 정렬
-        df_rates = df_rates.sort_values(by=["year", "currency"], ascending=[False, True]).reset_index(drop=True)
-
-        with st.form("edit_rates_batch_form"):
-            updated_rates = []
-            for idx, row in df_rates.iterrows():
-                rc1, rc2, rc3 = st.columns([1, 1, 2])
-                rc1.markdown(f"**{row['year']}년**")
-                rc2.markdown(f"**{row['currency']}**")
-                new_rate = rc3.number_input(f"환율 ({row['year']}년 {row['currency']})", value=float(row['rate']), step=1.0, key=f"rate_input_{row['id']}", label_visibility="collapsed")
-                
-                updated_rates.append({
-                    "id": row['id'],
-                    "year": row['year'],
-                    "currency": row['currency'],
-                    "rate": new_rate
-                })
-            
-            if st.form_submit_button("💾 변경된 환율 일괄 저장"):
-                with st.spinner("⏳ 환율 정보를 업데이트 중입니다..."):
-                    try:
-                        for ur in updated_rates:
-                            db.supabase.table("exchange_rates").update({"rate": ur["rate"]}).eq("id", ur["id"]).execute()
-                        st.success("✅ 환율 정보가 성공적으로 수정되었습니다!")
-                        st.cache_data.clear()
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"환율 수정 중 오류 발생: {e}")
-    else:
-        st.info("등록된 환율 정보가 없습니다. 아래에서 신규 환율을 등록해 주세요.")
-
-    st.markdown("---")
-    st.markdown("#### ➕ 신규 환율 등록")
     with st.form("rate_form"):
         col1, col2, col3 = st.columns(3)
         r_year = col1.number_input("연도", value=datetime.date.today().year)
         r_curr = col2.selectbox("화폐", ["USD", "EUR", "JPY"])
         r_rate = col3.number_input("환율 (KRW)", value=1350.00, step=10.0)
-        if st.form_submit_button("신규 환율 저장"):
+        if st.form_submit_button("환율 저장"):
             db.supabase.table("exchange_rates").upsert({"year": r_year, "currency": r_curr, "rate": r_rate}).execute()
-            st.success("✅ 신규 환율 설정 저장 완료!")
-            st.cache_data.clear()
+            st.success("✅ 환율 설정 저장 완료!")
             st.rerun()
 
 # ---------------------------------------------------------
