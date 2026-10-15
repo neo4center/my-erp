@@ -209,7 +209,6 @@ def render_a4_spec_card(item_code):
     category_full = f"{safe_str_clean(item.get('category_main'))} - {safe_str_clean(item.get('category_sub'))} - 선반:{safe_str_clean(item.get('shelf_no'))}"
     net_stock_valuation = total_in_amt - total_out_amt
 
-    # 화면 표시용 CSS
     st.markdown("""
     <style>
     .a4-card { background-color: #ffffff; border: 2px solid #333; border-radius: 8px; padding: 25px; margin-top: 10px; color: #111; }
@@ -222,7 +221,6 @@ def render_a4_spec_card(item_code):
     </style>
     """, unsafe_allow_html=True)
 
-    # 💡 백지 현상을 100% 해결하는 독립 팝업창 인쇄 자바스크립트 생성
     in_trs = "".join([f"<tr><td>{r['No']}</td><td>{r['일자']}</td><td>{r['구분']}</td><td>{r['수량']}</td><td>{r['원화환산액']}</td><td>{r['총금액']}</td><td>{r['담당자']}</td><td>{r['요청자']}</td><td>{r['비고']}</td></tr>" for r in in_rows]) if in_rows else "<tr><td colspan='9'>※ 입고 내역이 없습니다.</td></tr>"
     out_trs = "".join([f"<tr><td>{r['No']}</td><td>{r['일자']}</td><td>{r['구분']}</td><td>{r['수량']}</td><td>{r['원화환산액']}</td><td>{r['총금액']}</td><td>{r['담당자']}</td><td>{r['요청자']}</td><td>{r['비고']}</td></tr>" for r in out_rows]) if out_rows else "<tr><td colspan='9'>※ 출고 내역이 없습니다.</td></tr>"
     photo_url = item.get("photo_url")
@@ -324,7 +322,6 @@ def render_a4_spec_card(item_code):
     """
     components.html(print_script, height=50)
 
-    # ERP 화면 내부 출력
     with st.container():
         st.markdown("<div class='a4-card'>", unsafe_allow_html=True)
         st.markdown(f"<div class='a4-header'><h2>자재품목명세서</h2><p>발행일자: {datetime.date.today()}</p></div>", unsafe_allow_html=True)
@@ -942,7 +939,7 @@ elif menu == MENU_TRANS:
         st.markdown("#### ✏️ 기존 입출고 트랜잭션 내역 수정 및 삭제")
         col_ed1, col_ed2, col_ed3 = st.columns([2, 1, 1])
         edit_trans_kw = col_ed1.text_input("🔍 내역 검색 (품목코드, 요청자, 담당자, 비고)", "", key="edit_trans_search")
-        edit_start_date = col_ed2.date_input("조회 시작일", value=datetime.date.today() - datetime.timedelta(days=180), key="edit_start")
+        edit_start_date = col_ed2.date_input("조회 시작일", value=datetime.date(2022, 1, 1), key="edit_start")
         edit_end_date = col_ed3.date_input("조회 종료일", value=datetime.date.today(), key="edit_end")
 
         try:
@@ -1259,10 +1256,35 @@ elif menu == MENU_HISTORY:
     st.subheader("🔍 품목별 입출고 집계 및 소진 추이 조회")
     st.caption("💡 품목별로 총 입고량, 총 출고량, 현재 재고 수량 및 세부 입출고 이력을 요약하여 보여줍니다.")
 
+    # 💡 빠른 기간 선택 라디오 버튼 추가 (오늘 기준)
+    today_date = datetime.date.today()
+    period_option = st.radio(
+        "⏱️ 빠른 기간 선택", 
+        ["전체 (2022년~)", "1개월", "3개월", "6개월", "1년", "직접 설정"], 
+        index=0, 
+        horizontal=True
+    )
+
+    # 선택된 라디오 버튼에 따라 시작일 자동 계산
+    if period_option == "1개월":
+        default_start = today_date - datetime.timedelta(days=30)
+    elif period_option == "3개월":
+        default_start = today_date - datetime.timedelta(days=90)
+    elif period_option == "6개월":
+        default_start = today_date - datetime.timedelta(days=180)
+    elif period_option == "1년":
+        default_start = today_date - datetime.timedelta(days=365)
+    elif period_option == "전체 (2022년~)":
+        default_start = datetime.date(2022, 1, 1)
+    else:
+        default_start = datetime.date(2022, 1, 1)
+
     col_f1, col_f2, col_f3 = st.columns([2, 1, 1])
     hist_search = col_f1.text_input("🔍 품목 검색 (품목코드, 품명 등)", "")
-    start_date_filter = col_f2.date_input("조회 시작일", value=datetime.date.today() - datetime.timedelta(days=90))
-    end_date_filter = col_f3.date_input("조회 종료일", value=datetime.date.today())
+    
+    # 직접 설정일 때만 비활성화 없이 수정 가능하도록 구성 (라디오 선택 시 값 반영)
+    start_date_filter = col_f2.date_input("조회 시작일", value=default_start)
+    end_date_filter = col_f3.date_input("조회 종료일", value=today_date)
 
     try:
         h_query = db.supabase.table("stock_transactions").select("*") \
@@ -1509,20 +1531,58 @@ elif menu == MENU_HISTORY:
 # 메뉴 5: 환율 설정
 # ---------------------------------------------------------
 elif menu == MENU_RATES:
-    st.subheader("⚙️ 연도별 기준 환율 관리")
-    resp = db.supabase.table("exchange_rates").select("year, currency, rate").order("year", desc=True).execute()
-    df_rates = pd.DataFrame(resp.data or [])
-    if not df_rates.empty:
-        st.dataframe(df_rates.rename(columns={"year": "연도", "currency": "화폐단위", "rate": "환율"}), use_container_width=True)
+    st.subheader("⚙️ 연도별 기준 환율 관리 및 수정")
+    
+    try:
+        resp = db.supabase.table("exchange_rates").select("id, year, currency, rate").order("year", desc=True).execute()
+        rates_data = resp.data or []
+    except Exception:
+        rates_data = []
 
+    if rates_data:
+        st.markdown("#### 📋 등록된 환율 목록 (값 수정 가능)")
+        df_rates = pd.DataFrame(rates_data)
+        df_rates = df_rates.sort_values(by=["year", "currency"], ascending=[False, True]).reset_index(drop=True)
+
+        with st.form("edit_rates_batch_form"):
+            updated_rates = []
+            for idx, row in df_rates.iterrows():
+                rc1, rc2, rc3 = st.columns([1, 1, 2])
+                rc1.markdown(f"**{row['year']}년**")
+                rc2.markdown(f"**{row['currency']}**")
+                new_rate = rc3.number_input(f"환율 ({row['year']}년 {row['currency']})", value=float(row['rate']), step=1.0, key=f"rate_input_{row['id']}", label_visibility="collapsed")
+                
+                updated_rates.append({
+                    "id": row['id'],
+                    "year": row['year'],
+                    "currency": row['currency'],
+                    "rate": new_rate
+                })
+            
+            if st.form_submit_button("💾 변경된 환율 일괄 저장"):
+                with st.spinner("⏳ 환율 정보를 업데이트 중입니다..."):
+                    try:
+                        for ur in updated_rates:
+                            db.supabase.table("exchange_rates").update({"rate": ur["rate"]}).eq("id", ur["id"]).execute()
+                        st.success("✅ 환율 정보가 성공적으로 수정되었습니다!")
+                        st.cache_data.clear()
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"환율 수정 중 오류 발생: {e}")
+    else:
+        st.info("등록된 환율 정보가 없습니다. 아래에서 신규 환율을 등록해 주세요.")
+
+    st.markdown("---")
+    st.markdown("#### ➕ 신규 환율 등록")
     with st.form("rate_form"):
         col1, col2, col3 = st.columns(3)
         r_year = col1.number_input("연도", value=datetime.date.today().year)
         r_curr = col2.selectbox("화폐", ["USD", "EUR", "JPY"])
         r_rate = col3.number_input("환율 (KRW)", value=1350.00, step=10.0)
-        if st.form_submit_button("환율 저장"):
+        if st.form_submit_button("신규 환율 저장"):
             db.supabase.table("exchange_rates").upsert({"year": r_year, "currency": r_curr, "rate": r_rate}).execute()
-            st.success("✅ 환율 설정 저장 완료!")
+            st.success("✅ 신규 환율 설정 저장 완료!")
+            st.cache_data.clear()
             st.rerun()
 
 # ---------------------------------------------------------
