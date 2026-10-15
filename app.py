@@ -1283,7 +1283,6 @@ elif menu == MENU_HISTORY:
     start_date_filter = col_f2.date_input("조회 시작일", value=default_start)
     end_date_filter = col_f3.date_input("조회 종료일", value=today_date)
 
-    # 모든 트랜잭션 데이터를 가져오되, 기초재고를 포함하여 가져옴 (requester 필터 완화)
     all_trans_resp = []
     try:
         chunk_size = 1000
@@ -1303,7 +1302,7 @@ elif menu == MENU_HISTORY:
     item_latest_price_map = {}
     item_latest_date_map = {}
     item_latest_dt_obj_map = {}
-    item_out_count_map = {} # 품목별 출고 횟수 또는 총 출고 수량 체크용
+    item_out_count_map = {}
 
     for t in all_trans_resp:
         ic = t.get("item_code")
@@ -1333,7 +1332,7 @@ elif menu == MENU_HISTORY:
                     item_latest_price_map[ic] = t_price
         elif ttype in ["OUT", "출고"]:
             item_calc_stock_map[ic] -= q
-            item_out_count_map[ic] += q # 출고 수량 누적
+            item_out_count_map[ic] += q
 
     item_info_map = {}
     try:
@@ -1362,7 +1361,6 @@ elif menu == MENU_HISTORY:
     for t in all_trans_resp:
         icode = str(t.get("item_code", "-")).strip().upper()
         
-        # 조건 1: 출고 수량이 총 1개 이상인 품목만 대상에 포함
         if item_out_count_map.get(icode, 0) < 1:
             continue
 
@@ -1394,7 +1392,7 @@ elif menu == MENU_HISTORY:
             if icode not in item_summary_map:
                 info = item_info_map.get(icode, {"name": "-", "model_spec": "-", "detail_no": "-", "currency": "KRW", "unit_price": 0.0, "in_date": str(datetime.date.today())})
                 current_stock = max(0, item_calc_stock_map.get(icode, 0))
-                total_in_all = item_total_in_all_map.get(icode, 0) # 기초재고 + 신규입고 합산 수량
+                total_in_all = item_total_in_all_map.get(icode, 0)
                 
                 latest_price = item_latest_price_map.get(icode, info["unit_price"])
                 latest_date = item_latest_date_map.get(icode, info["in_date"])
@@ -1497,10 +1495,12 @@ elif menu == MENU_HISTORY:
         st.markdown(f"### 📋 선택 품목 [{target_icode}] 상세 입출고 이력 (기초재고 포함)")
         
         if target_summary and target_summary["상세내역"]:
-            # 일자 최신순 정렬 (날짜 기준 내림차순)
-            sorted_details = sorted(target_summary["상세내역"], key=lambda x: str(x.get("trans_date", "")), reverse=True)
+            sorted_details = sorted(target_summary["상세내역"], key=lambda x: str(x.get("trans_date", "")), reverse=False)
 
             detail_rows = []
+            calc_sub_out_qty = 0
+            calc_sub_out_amt = 0
+
             for idx, t in enumerate(sorted_details, 1):
                 icode = str(t.get("item_code", "-")).strip()
                 info = item_info_map.get(icode.upper(), {"name": "-", "currency": "KRW"})
@@ -1516,6 +1516,10 @@ elif menu == MENU_HISTORY:
                 unit_krw = round(price * rate)
                 total_krw = round(qty * unit_krw)
                 
+                if t_type in ["OUT", "출고"]:
+                    calc_sub_out_qty += qty
+                    calc_sub_out_amt += total_krw
+
                 type_display = "입고 (IN)" if t_type in ["IN", "입고"] else "출고 (OUT)"
 
                 raw_mgr = safe_str_clean(t.get("manager"), "")
@@ -1541,6 +1545,22 @@ elif menu == MENU_HISTORY:
                     "비고": safe_str_clean(t.get("remark"), "-")
                 })
 
+            # 상단 요약 정보 표시 (총 출고수량 및 총 금액 빨간색 굵은 글씨체 / 전체기간 선택 시 현재재고 및 재고금액 파란색 굵은 글씨체 추가)
+            summary_html = f"""
+            <div style="background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 6px; padding: 12px 20px; margin-bottom: 10px; font-size: 15px;">
+                <b>선택 품목:</b> <span style="color: #2e7d32;">[{target_icode}] {target_summary['품명']}</span> (규격: {target_summary['규격_모델']})<br>
+                <span style="display: inline-block; margin-top: 6px;">
+                    🔥 <b>총 출고수량:</b> <span style="color: #D32F2F; font-weight: bold;">{calc_sub_out_qty:,} 개</span> &nbsp;|&nbsp; 
+                    💰 <b>총 금액:</b> <span style="color: #D32F2F; font-weight: bold;">{calc_sub_out_amt:,.0f} 원</span>
+            """
+            if period_option == "전체 (2022년~)":
+                summary_html += f"""
+                    &nbsp;|&nbsp; 📦 <b>현재재고:</b> <span style="color: #1976D2; font-weight: bold;">{target_summary['현재재고']:,} 개</span> &nbsp;|&nbsp; 
+                    💵 <b>재고금액:</b> <span style="color: #1976D2; font-weight: bold;">{target_summary['재고금액']:,.0f} 원</span>
+                """
+            summary_html += "</span></div>"
+            st.markdown(summary_html, unsafe_allow_html=True)
+
             df_detail = pd.DataFrame(detail_rows)
 
             def highlight_trans_type(row):
@@ -1553,7 +1573,6 @@ elif menu == MENU_HISTORY:
 
             styled_detail_df = df_detail.style.apply(highlight_trans_type, axis=1)
 
-            st.markdown(f"**선택 품목:** `[{target_icode}] {target_summary['품명']}` (규격: {target_summary['규격_모델']})")
             st.dataframe(
                 styled_detail_df,
                 column_config={
