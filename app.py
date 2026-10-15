@@ -14,7 +14,7 @@ st.set_page_config(page_title="광주오포센터 자동화 ERP", layout="wide")
 # ---------------------------------------------------------
 # 1. 헬퍼 함수
 # ---------------------------------------------------------
-POSITIONS = ["팀장", "부팀장", "마스터", "과장", "대리", "주임", "사원"]
+POSITIONS = ["팀장", "부팀장", "마스터", "과장", "대리", "주임", "사원", "게스트"]
 
 def safe_float(val, default=0.0):
     if pd.isna(val) or val is None:
@@ -445,9 +445,15 @@ MENU_ITEMS = "🏷️ 품목 관리"
 MENU_HISTORY = "🔍 입출고 내역 조회"
 MENU_RATES = "⚙️ 환율 설정"
 
-menu_list = [MENU_STOCK, MENU_TRANS, MENU_ITEMS, MENU_HISTORY, MENU_RATES]
-if user.get("is_admin") == 1:
-    menu_list.append("👥 사용자 관리 (관리자)")
+# 권한에 따른 메뉴 목록 구성 (게스트는 재고 현황판, 입출고 내역 조회만 허용)
+is_guest = (user.get("position") == "게스트" or user.get("is_admin") == 2)
+
+if is_guest:
+    menu_list = [MENU_STOCK, MENU_HISTORY]
+else:
+    menu_list = [MENU_STOCK, MENU_TRANS, MENU_ITEMS, MENU_HISTORY, MENU_RATES]
+    if user.get("is_admin") == 1:
+        menu_list.append("👥 사용자 관리 (관리자)")
 
 menu = st.sidebar.radio("메뉴 이동:", menu_list)
 
@@ -758,9 +764,12 @@ if menu == MENU_STOCK:
         st.info("조건에 일치하는 품목 데이터가 없습니다.")
 
 # ---------------------------------------------------------
-# 메뉴 2: 입출고 등록
+# 메뉴 2: 입출고 등록 (게스트 접근 제한)
 # ---------------------------------------------------------
 elif menu == MENU_TRANS:
+    if is_guest:
+        st.error("❌ 게스트 계정은 접근할 수 없는 메뉴입니다.")
+        st.stop()
     st.subheader("📝 자재 입출고 등록 및 이력 관리")
 
     tab_t1, tab_t2 = st.tabs(["✍️ 신규 입출고 등록", "✏️ 기존 입출고 내역 수정 및 삭제"])
@@ -1014,9 +1023,12 @@ elif menu == MENU_TRANS:
             st.info("선택한 기간 또는 검색 조건에 일치하는 입출고 내역이 없습니다.")
 
 # ---------------------------------------------------------
-# 메뉴 3: 품목 관리
+# 메뉴 3: 품목 관리 (게스트 접근 제한)
 # ---------------------------------------------------------
 elif menu == MENU_ITEMS:
+    if is_guest:
+        st.error("❌ 게스트 계정은 접근할 수 없는 메뉴입니다.")
+        st.stop()
     st.subheader("🏷️ 품목 등록 및 수정 관리")
     tab1, tab2, tab3 = st.tabs(["✍️ 개별 직접 등록", "✏️ 기존 품목 수정", "📂 기초 데이터 엑셀 일괄 등록"])
 
@@ -1283,7 +1295,6 @@ elif menu == MENU_HISTORY:
     start_date_filter = col_f2.date_input("조회 시작일", value=default_start)
     end_date_filter = col_f3.date_input("조회 종료일", value=today_date)
 
-    # 모든 트랜잭션 데이터 페이징 없이 전체 수집
     all_trans_resp = []
     try:
         chunk_size = 1000
@@ -1362,7 +1373,6 @@ elif menu == MENU_HISTORY:
     for t in all_trans_resp:
         icode = str(t.get("item_code", "-")).strip().upper()
         
-        # 출고 1개 이상 품목 대상
         if item_out_count_map.get(icode, 0) < 1:
             continue
 
@@ -1537,7 +1547,6 @@ elif menu == MENU_HISTORY:
                 if raw_req in ["-", "초기재고일괄등록", "시스템입고", "None", ""]:
                     raw_req = "기초재고등록" if t_type in ["IN", "입고"] else "-"
 
-                # UI 화면용 데이터 (단위 텍스트 포함)
                 detail_rows.append({
                     "No": idx,
                     "일자": t_date,
@@ -1550,7 +1559,6 @@ elif menu == MENU_HISTORY:
                     "비고": safe_str_clean(t.get("remark"), "-")
                 })
 
-                # 엑셀 추출용 순수 데이터 (단위 문자 제거, 숫자형 보존)
                 raw_export_detail_rows.append({
                     "품목코드": target_icode,
                     "품명": target_summary['품명'],
@@ -1565,7 +1573,6 @@ elif menu == MENU_HISTORY:
                     "비고": safe_str_clean(t.get("remark"), "-")
                 })
 
-            # 상단 요약 정보
             out_info_html = f"🔥 <b>총 출고수량:</b> <span style='color: #D32F2F; font-weight: bold;'>{calc_sub_out_qty:,} 개</span> &nbsp;|&nbsp; 💰 <b>총 금액:</b> <span style='color: #D32F2F; font-weight: bold;'>{calc_sub_out_amt:,.0f} 원</span>"
             
             stock_info_html = ""
@@ -1582,13 +1589,12 @@ elif menu == MENU_HISTORY:
             """
             st.markdown(summary_html, unsafe_allow_html=True)
 
-            # 상세 이력 페이징 처리 (100건 단위)
             total_details_count = len(detail_rows)
             PAGE_SIZE_DETAIL = 100
             total_detail_pages = math.ceil(total_details_count / PAGE_SIZE_DETAIL)
 
             if total_detail_pages > 1:
-                col_dp1, col_dp2 = st.columns([2, 3])
+                col_dp1, _ = st.columns([2, 3])
                 with col_dp1:
                     selected_detail_page = st.selectbox(
                         "📄 상세 이력 페이지 선택 (100건씩 보기)",
@@ -1638,10 +1644,7 @@ elif menu == MENU_HISTORY:
         with col_down1:
             out_excel = io.BytesIO()
             with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
-                # 시트 1: 품목별 입출고 집계 요약
                 df_summary.to_excel(writer, index=False, sheet_name="품목별입출고집계")
-                
-                # 시트 2: 선택 품목 상세 입출고 이력 (단위 문자가 제거된 순수 숫자로 계산 가능)
                 if raw_export_detail_rows:
                     df_raw_detail = pd.DataFrame(raw_export_detail_rows)
                     df_raw_detail.to_excel(writer, index=False, sheet_name="선택품목_상세입출고이력")
@@ -1655,9 +1658,12 @@ elif menu == MENU_HISTORY:
         st.info("조건에 일치하는 출고 이력이 있는 품목 데이터가 없습니다.")
 
 # ---------------------------------------------------------
-# 메뉴 5: 환율 설정
+# 메뉴 5: 환율 설정 (게스트 접근 제한)
 # ---------------------------------------------------------
 elif menu == MENU_RATES:
+    if is_guest:
+        st.error("❌ 게스트 계정은 접근할 수 없는 메뉴입니다.")
+        st.stop()
     st.subheader("⚙️ 연도별 기준 환율 관리 및 수정")
     
     try:
@@ -1716,6 +1722,9 @@ elif menu == MENU_RATES:
 # 메뉴 6: 사용자 관리 (관리자 전용)
 # ---------------------------------------------------------
 elif menu == "👥 사용자 관리 (관리자)":
+    if is_guest:
+        st.error("❌ 게스트 계정은 접근할 수 없는 메뉴입니다.")
+        st.stop()
     st.subheader("👥 시스템 사용자 계정 관리")
     
     tab_u1, tab_u2, tab_u3 = st.tabs(["📋 전체 사용자 목록", "➕ 신규 사용자 등록", "✏️ 사용자 정보 수정 및 삭제"])
@@ -1724,7 +1733,13 @@ elif menu == "👥 사용자 관리 (관리자)":
         resp = db.supabase.table("users").select("emp_no, name, position, is_admin, created_at").execute()
         if resp.data:
             df_users = pd.DataFrame(resp.data)
-            df_users["관리자여부"] = df_users["is_admin"].apply(lambda x: "관리자 (Admin)" if x == 1 else "일반 사용자")
+            def format_role(x):
+                if x == 1:
+                    return "관리자 (Admin)"
+                elif x == 2:
+                    return "게스트 (Guest)"
+                return "일반 사용자"
+            df_users["관리자여부"] = df_users["is_admin"].apply(format_role)
             st.dataframe(
                 df_users[["emp_no", "name", "position", "관리자여부", "created_at"]].rename(
                     columns={"emp_no": "사번", "name": "이름", "position": "직급", "created_at": "등록일시"}
@@ -1744,8 +1759,11 @@ elif menu == "👥 사용자 관리 (관리자)":
 
             col3, col4, col5 = st.columns(3)
             new_pw = col3.text_input("비밀번호 (PW) *필수", type="password")
-            new_pos = col4.selectbox("직급", POSITIONS, index=4)
-            new_is_admin = col5.selectbox("권한 설정", [0, 1], format_func=lambda x: "관리자 (Admin)" if x == 1 else "일반 사용자")
+            new_pos = col4.selectbox("직급", POSITIONS, index=7) # 기본값 게스트 또는 적절히 선택 가능
+            
+            # 권한 설정: 일반 사용자(0), 관리자(1), 게스트(2)
+            role_options = {0: "일반 사용자", 1: "관리자 (Admin)", 2: "게스트 (Guest)"}
+            new_is_admin = col5.selectbox("권한 설정", [0, 1, 2], format_func=lambda x: role_options[x], index=2)
 
             if st.form_submit_button("신규 사용자 등록"):
                 if not new_emp_no.strip() or not new_name.strip() or not new_pw.strip():
@@ -1783,13 +1801,14 @@ elif menu == "👥 사용자 관리 (관리자)":
                 e_u_pw = col2.text_input("새 비밀번호 (변경 시에만 입력)", value="", type="password")
 
                 col3, col4 = st.columns(2)
-                current_pos = target_user.get("position", "대리")
-                pos_idx = POSITIONS.index(current_pos) if current_pos in POSITIONS else 4
+                current_pos = target_user.get("position", "게스트")
+                pos_idx = POSITIONS.index(current_pos) if current_pos in POSITIONS else 7
                 e_u_pos = col3.selectbox("직급", POSITIONS, index=pos_idx)
                 
                 curr_admin = target_user.get("is_admin", 0)
-                admin_idx = 0 if curr_admin == 0 else 1
-                e_u_admin = col4.selectbox("권한", [0, 1], index=admin_idx, format_func=lambda x: "관리자 (Admin)" if x == 1 else "일반 사용자")
+                admin_idx = curr_admin if curr_admin in [0, 1, 2] else 0
+                role_options = {0: "일반 사용자", 1: "관리자 (Admin)", 2: "게스트 (Guest)"}
+                e_u_admin = col4.selectbox("권한", [0, 1, 2], index=admin_idx, format_func=lambda x: role_options[x])
 
                 col_b1, col_b2 = st.columns(2)
                 sub_u_update = col_b1.form_submit_button("💾 사용자 정보 수정 저장")
