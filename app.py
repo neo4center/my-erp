@@ -1483,7 +1483,7 @@ elif menu == MENU_HISTORY:
                 return 'color: #D32F2F; font-weight: bold;'
             return ''
 
-        styled_df = styled_df.applymap(color_zero_stock, subset=["현재재고"])
+        styled_df = styled_df.map(color_zero_stock, subset=["현재재고"])
 
         summary_selection = st.dataframe(
             styled_df,
