@@ -210,16 +210,42 @@ def render_a4_spec_card(item_code):
     df_out = pd.DataFrame(out_rows)
     category_full = f"{safe_str_clean(item.get('category_main'))} - {safe_str_clean(item.get('category_sub'))} - 선반:{safe_str_clean(item.get('shelf_no'))}"
 
-    # 💡 인쇄 시 표 전체가 스크롤 없이 펼쳐지도록 CSS 및 Streamlit Components 인쇄 버튼 적용
+    # 💡 백지 현상을 완벽히 방지하는 백그라운드/인쇄 전용 CSS
     st.markdown("""
     <style>
     @media print {
-        body * { visibility: hidden; }
-        #printable-spec-card, #printable-spec-card * { visibility: visible; }
-        #printable-spec-card { position: absolute; left: 0; top: 0; width: 100%; border: none !important; margin: 0; padding: 10px; }
-        /* 스크롤 영역을 해제하여 모든 행이 인쇄되도록 설정 */
-        div[data-testid="stDataFrame"] div[data-baseweb="tab-panel"], div[data-testid="stDataFrame"] { max-height: none !important; overflow: visible !important; }
-        .no-print { display: none !important; }
+        /* Streamlit 기본 UI 구성요소 전부 감추기 */
+        header, footer, [data-testid="stSidebar"], [data-testid="stHeader"], .stApp > header {
+            display: none !important;
+        }
+        /* 메인 컨테이너 외부 여백 제거 */
+        .main .block-container {
+            padding: 0 !important;
+            margin: 0 !important;
+            max-width: 100% !important;
+        }
+        /* printable-spec-card 영역 외 다른 요소 감추기 */
+        body * {
+            visibility: hidden;
+        }
+        #printable-spec-card, #printable-spec-card * {
+            visibility: visible !important;
+        }
+        #printable-spec-card {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            margin: 0 !important;
+            padding: 15px !important;
+            box-sizing: border-box !important;
+        }
+        /* 표 내역 높이 제한 및 스크롤 완전 해제 */
+        div[data-testid="stDataFrame"] {
+            overflow: visible !important;
+            height: auto !important;
+            max-height: none !important;
+        }
     }
     .a4-card { background-color: #ffffff; border: 2px solid #333; border-radius: 8px; padding: 25px; margin-top: 10px; color: #111; }
     .a4-header { text-align: center; border-bottom: 3px double #333; padding-bottom: 10px; margin-bottom: 20px; }
@@ -230,10 +256,10 @@ def render_a4_spec_card(item_code):
     </style>
     """, unsafe_allow_html=True)
 
-    # 💡 Streamlit Components 기반 확실하게 동작하는 인쇄 버튼
+    # 💡 브라우저의 parent 문서 전체에 인쇄 명령 전달
     print_component_html = """
     <div style="text-align: right; margin-bottom: 10px;">
-        <button onclick="parent.window.print();" style="background-color: #ffffff; color: #333; border: 1px solid #ccc; padding: 8px 16px; border-radius: 6px; font-weight: bold; cursor: pointer; font-family: sans-serif;">🖨️ 명세서 인쇄/PDF 저장</button>
+        <button onclick="window.parent.focus(); window.parent.print();" style="background-color: #ffffff; color: #333; border: 1px solid #ccc; padding: 8px 16px; border-radius: 6px; font-weight: bold; cursor: pointer; font-family: sans-serif;">🖨️ 명세서 인쇄/PDF 저장</button>
     </div>
     """
     components.html(print_component_html, height=45)
@@ -280,8 +306,7 @@ def render_a4_spec_card(item_code):
         col_t1_sum.markdown(f"<div style='text-align: right; padding-top: 10px; font-weight: bold; color: #1B5E20;'>합계 수량: {total_in_qty:,} 개 &nbsp;|&nbsp; 총 금액: {total_in_amt:,} 원</div>", unsafe_allow_html=True)
         
         if not df_in.empty:
-            # 💡 높이 제한을 없애 전체 내역이 인쇄되도록 설정
-            st.dataframe(df_in, column_config={"No": st.column_config.NumberColumn("No", width="small", format="%d")}, use_container_width=True, hide_index=True, height=min(400, (len(df_in) + 1) * 35 + 10))
+            st.dataframe(df_in, column_config={"No": st.column_config.NumberColumn("No", width="small", format="%d")}, use_container_width=True, hide_index=True)
         else:
             st.caption("※ 입고 내역이 없습니다.")
 
@@ -292,13 +317,11 @@ def render_a4_spec_card(item_code):
         col_t2_sum.markdown(f"<div style='text-align: right; padding-top: 10px; font-weight: bold; color: #B71C1C;'>합계 수량: {total_out_qty:,} 개 &nbsp;|&nbsp; 총 금액: {total_out_amt:,} 원</div>", unsafe_allow_html=True)
 
         if not df_out.empty:
-            # 💡 높이 제한을 없애 전체 내역이 인쇄되도록 설정
-            st.dataframe(df_out, column_config={"No": st.column_config.NumberColumn("No", width="small", format="%d")}, use_container_width=True, hide_index=True, height=min(400, (len(df_out) + 1) * 35 + 10))
+            st.dataframe(df_out, column_config={"No": st.column_config.NumberColumn("No", width="small", format="%d")}, use_container_width=True, hide_index=True)
         else:
             st.caption("※ 출고 내역이 없습니다.")
 
         st.markdown("</div>", unsafe_allow_html=True)
-
 # ---------------------------------------------------------
 # 2. 로그인 세션 관리
 # ---------------------------------------------------------
