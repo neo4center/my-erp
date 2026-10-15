@@ -206,15 +206,14 @@ def render_a4_spec_card(item_code):
     total_val_krw = round(current_stock * (representative_price * representative_rate))
     unit_krw_display = int(round(representative_price * representative_rate))
 
-    df_in = pd.DataFrame(in_rows)
-    df_out = pd.DataFrame(out_rows)
     category_full = f"{safe_str_clean(item.get('category_main'))} - {safe_str_clean(item.get('category_sub'))} - 선반:{safe_str_clean(item.get('shelf_no'))}"
 
-    # 💡 인쇄 시 `#printable-spec-card` 영역만 출력하고 표 내부 스크롤을 해제하여 전체 내역이 인쇄되도록 설정
+    # 💡 백지 방지 및 완벽한 인쇄용 CSS 설정 (HTML 테이블 기반 렌더링 호환)
     st.markdown("""
     <style>
     @media print {
-        header, footer, [data-testid="stSidebar"], [data-testid="stHeader"], div.stButton, iframe {
+        /* 사이드바, 헤더, 버튼, 상단 컨트롤 영역 완벽 숨김 */
+        header, footer, [data-testid="stSidebar"], [data-testid="stHeader"], div.stButton, iframe, .no-print {
             display: none !important;
         }
         body, html {
@@ -228,6 +227,7 @@ def render_a4_spec_card(item_code):
             margin: 0 !important;
             max-width: 100% !important;
         }
+        /* 프린트 대상 영역만 노출 */
         body * {
             visibility: hidden !important;
         }
@@ -244,28 +244,31 @@ def render_a4_spec_card(item_code):
             box-shadow: none !important;
             margin: 0 !important;
             padding: 10px !important;
+            background: #ffffff !important;
         }
-        /* 인쇄 시 스크롤 컨테이너 해제하여 모든 행 출력 */
-        div[data-testid="stDataFrame"] div[data-baseweb="tab-panel"], div[data-testid="stDataFrame"], div.element-container {
-            max-height: none !important;
-            overflow: visible !important;
-            height: auto !important;
+        /* 인쇄 시 표 줄바꿈 최적화 및 스크롤 완전 해제 */
+        table {
+            page-break-inside: auto;
+            width: 100% !important;
+            border-collapse: collapse !important;
         }
-        table, tr, td, th {
+        tr {
             page-break-inside: avoid;
+            page-break-after: auto;
         }
     }
     .a4-card { background-color: #ffffff; border: 2px solid #333; border-radius: 8px; padding: 25px; margin-top: 10px; color: #111; }
     .a4-header { text-align: center; border-bottom: 3px double #333; padding-bottom: 10px; margin-bottom: 20px; }
-    .info-table { width: 100%; border-collapse: collapse; margin-bottom: 15px; }
-    .info-table th, .info-table td { border: 1px solid #ccc; padding: 8px 12px; font-size: 14px; }
-    .info-table th { background-color: #f4f4f4; font-weight: bold; width: 18%; text-align: center; }
-    .stock-calc-banner { background-color: #E3F2FD; border: 2px solid #2196F3; border-radius: 8px; padding: 15px; text-align: center; font-size: 18px; font-weight: bold; color: #0D47A1; margin: 20px 0; }
+    .info-table, .trans-table { width: 100%; border-collapse: collapse; margin-bottom: 15px; }
+    .info-table th, .info-table td, .trans-table th, .trans-table td { border: 1px solid #ccc; padding: 8px 12px; font-size: 13px; text-align: center; }
+    .info-table th { background-color: #f4f4f4; font-weight: bold; width: 18%; }
+    .trans-table th { background-color: #f8f9fa; font-weight: bold; }
+    .stock-calc-banner { background-color: #E3F2FD; border: 2px solid #2196F3; border-radius: 8px; padding: 15px; text-align: center; font-size: 16px; font-weight: bold; color: #0D47A1; margin: 20px 0; }
     </style>
     """, unsafe_allow_html=True)
 
     print_component_html = """
-    <div style="text-align: right; margin-bottom: 10px;">
+    <div class="no-print" style="text-align: right; margin-bottom: 10px;">
         <button onclick="window.parent.focus(); window.parent.print();" style="background-color: #ffffff; color: #333; border: 1px solid #ccc; padding: 8px 16px; border-radius: 6px; font-weight: bold; cursor: pointer; font-family: sans-serif;">🖨️ 명세서 인쇄/PDF 저장</button>
     </div>
     """
@@ -308,23 +311,63 @@ def render_a4_spec_card(item_code):
 
         st.markdown("---")
         
-        col_t1, col_t1_sum = st.columns([2, 3])
-        col_t1.markdown("### 📥 1. 입고 내역")
-        col_t1_sum.markdown(f"<div style='text-align: right; padding-top: 10px; font-weight: bold; color: #1B5E20;'>합계 수량: {total_in_qty:,} 개 &nbsp;|&nbsp; 총 금액: {total_in_amt:,} 원</div>", unsafe_allow_html=True)
-        
-        if not df_in.empty:
-            st.dataframe(df_in, column_config={"No": st.column_config.NumberColumn("No", width="small", format="%d")}, use_container_width=True, hide_index=True)
+        # 1. 입고 내역 (인쇄 시 스크롤 없이 전체 출력되는 HTML 테이블 방식 적용)
+        st.markdown(f"""
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+            <h3 style="margin: 0; font-size: 18px;">📥 1. 입고 내역</h3>
+            <span style="font-weight: bold; color: #1B5E20; font-size: 14px;">합계 수량: {total_in_qty:,} 개 &nbsp;|&nbsp; 총 금액: {total_in_amt:,} 원</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+        if in_rows:
+            in_table_html = """
+            <table class="trans-table">
+                <thead>
+                    <tr style="background-color: #f8f9fa;">
+                        <th>No</th><th>일자</th><th>구분</th><th>수량</th><th>원화환산액</th><th>총금액</th><th>담당자</th><th>요청자</th><th>비고</th>
+                    </tr>
+                </thead>
+                <tbody>
+            """
+            for r in in_rows:
+                in_table_html += f"""
+                    <tr>
+                        <td>{r['No']}</td><td>{r['일자']}</td><td>{r['구분']}</td><td>{r['수량']}</td><td>{r['원화환산액']}</td><td>{r['총금액']}</td><td>{r['담당자']}</td><td>{r['요청자']}</td><td>{r['비고']}</td>
+                    </tr>
+                """
+            in_table_html += "</tbody></table>"
+            st.markdown(in_table_html, unsafe_allow_html=True)
         else:
             st.caption("※ 입고 내역이 없습니다.")
 
         st.markdown("---")
 
-        col_t2, col_t2_sum = st.columns([2, 3])
-        col_t2.markdown("### 📤 2. 출고 내역")
-        col_t2_sum.markdown(f"<div style='text-align: right; padding-top: 10px; font-weight: bold; color: #B71C1C;'>합계 수량: {total_out_qty:,} 개 &nbsp;|&nbsp; 총 금액: {total_out_amt:,} 원</div>", unsafe_allow_html=True)
+        # 2. 출고 내역 (인쇄 시 스크롤 없이 전체 출력되는 HTML 테이블 방식 적용)
+        st.markdown(f"""
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+            <h3 style="margin: 0; font-size: 18px;">📤 2. 출고 내역</h3>
+            <span style="font-weight: bold; color: #B71C1C; font-size: 14px;">합계 수량: {total_out_qty:,} 개 &nbsp;|&nbsp; 총 금액: {total_out_amt:,} 원</span>
+        </div>
+        """, unsafe_allow_html=True)
 
-        if not df_out.empty:
-            st.dataframe(df_out, column_config={"No": st.column_config.NumberColumn("No", width="small", format="%d")}, use_container_width=True, hide_index=True)
+        if out_rows:
+            out_table_html = """
+            <table class="trans-table">
+                <thead>
+                    <tr style="background-color: #f8f9fa;">
+                        <th>No</th><th>일자</th><th>구분</th><th>수량</th><th>원화환산액</th><th>총금액</th><th>담당자</th><th>요청자</th><th>비고</th>
+                    </tr>
+                </thead>
+                <tbody>
+            """
+            for r in out_rows:
+                out_table_html += f"""
+                    <tr>
+                        <td>{r['No']}</td><td>{r['일자']}</td><td>{r['구분']}</td><td>{r['수량']}</td><td>{r['원화환산액']}</td><td>{r['총금액']}</td><td>{r['담당자']}</td><td>{r['요청자']}</td><td>{r['비고']}</td>
+                    </tr>
+                """
+            out_table_html += "</tbody></table>"
+            st.markdown(out_table_html, unsafe_allow_html=True)
         else:
             st.caption("※ 출고 내역이 없습니다.")
 
