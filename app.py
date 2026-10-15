@@ -210,41 +210,38 @@ def render_a4_spec_card(item_code):
     df_out = pd.DataFrame(out_rows)
     category_full = f"{safe_str_clean(item.get('category_main'))} - {safe_str_clean(item.get('category_sub'))} - 선반:{safe_str_clean(item.get('shelf_no'))}"
 
-    # 💡 백지 현상을 완벽히 방지하는 백그라운드/인쇄 전용 CSS
+    # 💡 백지 현상을 완벽히 해결한 인쇄 전용 CSS 스타일
     st.markdown("""
     <style>
     @media print {
-        /* Streamlit 기본 UI 구성요소 전부 감추기 */
-        header, footer, [data-testid="stSidebar"], [data-testid="stHeader"], .stApp > header {
+        /* Streamlit 레이아웃 전체 숨기기 */
+        header, footer, [data-testid="stSidebar"], [data-testid="stHeader"], div.stButton, iframe {
             display: none !important;
         }
-        /* 메인 컨테이너 외부 여백 제거 */
-        .main .block-container {
+        body, html {
+            background-color: #ffffff !important;
+            color: #000000 !important;
+            height: auto !important;
+            overflow: visible !important;
+        }
+        .main, .block-container {
             padding: 0 !important;
             margin: 0 !important;
             max-width: 100% !important;
         }
-        /* printable-spec-card 영역 외 다른 요소 감추기 */
-        body * {
-            visibility: hidden;
-        }
-        #printable-spec-card, #printable-spec-card * {
-            visibility: visible !important;
-        }
+        /* 명세서 카드 영역만 출력되도록 설정 */
         #printable-spec-card {
-            position: absolute !important;
-            left: 0 !important;
-            top: 0 !important;
+            display: block !important;
+            position: static !important;
             width: 100% !important;
+            border: none !important;
+            box-shadow: none !important;
             margin: 0 !important;
-            padding: 15px !important;
-            box-sizing: border-box !important;
+            padding: 0 !important;
         }
-        /* 표 내역 높이 제한 및 스크롤 완전 해제 */
-        div[data-testid="stDataFrame"] {
-            overflow: visible !important;
-            height: auto !important;
-            max-height: none !important;
+        /* 표 내부 내용이 잘리거나 숨겨지지 않도록 보장 */
+        table, tr, td, th {
+            page-break-inside: avoid;
         }
     }
     .a4-card { background-color: #ffffff; border: 2px solid #333; border-radius: 8px; padding: 25px; margin-top: 10px; color: #111; }
@@ -256,7 +253,7 @@ def render_a4_spec_card(item_code):
     </style>
     """, unsafe_allow_html=True)
 
-    # 💡 브라우저의 parent 문서 전체에 인쇄 명령 전달
+    # 💡 브라우저 인쇄 버튼 컴포넌트
     print_component_html = """
     <div style="text-align: right; margin-bottom: 10px;">
         <button onclick="window.parent.focus(); window.parent.print();" style="background-color: #ffffff; color: #333; border: 1px solid #ccc; padding: 8px 16px; border-radius: 6px; font-weight: bold; cursor: pointer; font-family: sans-serif;">🖨️ 명세서 인쇄/PDF 저장</button>
@@ -322,6 +319,7 @@ def render_a4_spec_card(item_code):
             st.caption("※ 출고 내역이 없습니다.")
 
         st.markdown("</div>", unsafe_allow_html=True)
+
 # ---------------------------------------------------------
 # 2. 로그인 세션 관리
 # ---------------------------------------------------------
