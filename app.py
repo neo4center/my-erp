@@ -394,7 +394,7 @@ if menu == MENU_STOCK:
                 PAGE_SIZE_STOCK = 100
                 total_stock_pages = max(1, math.ceil(total_count / PAGE_SIZE_STOCK))
                 
-                col_p1, _ = st.columns([1, 4])
+                col_p1, _, col_p_btn = st.columns([1, 2, 2])
                 with col_p1:
                     current_stock_page = st.selectbox("📄 페이지 선택 (100건씩)", list(range(1, total_stock_pages + 1)), format_func=lambda x: f"{x} 페이지 (총 {total_stock_pages}페이지)")
 
@@ -499,12 +499,9 @@ if menu == MENU_STOCK:
         if sel_cat_main != "전체":
             df_stock = df_stock[df_stock["대분류"] == sel_cat_main]
 
-        total_all_asset_amt = sum(df_stock["재고금액"])
+        current_page_asset_amt = sum(df_stock["재고금액"])
 
-        col1, col2, col3 = st.columns([2, 2, 2])
-        col1.metric("전체 등록 품목 수", f"{total_count} 개")
-        col2.metric("총 재고 자산 금액", f"{total_all_asset_amt:,.0f} 원")
-
+        # 💡 전체 품목의 총 재고 자산 금액을 정확히 계산하기 위해 전체 아이템 조회
         try:
             full_excel_items = []
             chunk_size = 1000
@@ -519,6 +516,7 @@ if menu == MENU_STOCK:
         except Exception:
             full_excel_items = all_items
 
+        total_all_asset_amt = 0
         excel_rows = []
         for item in full_excel_items:
             icode = item.get("item_code")
@@ -531,6 +529,7 @@ if menu == MENU_STOCK:
             rate = get_exchange_rate_by_year(curr, year)
             unit_krw = round(base_price * rate)
             stock_amt = round(unit_krw * calc_qty)
+            total_all_asset_amt += stock_amt
 
             excel_rows.append({
                 "Lot ID": "-",
@@ -557,9 +556,17 @@ if menu == MENU_STOCK:
         out_excel = io.BytesIO()
         with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
             df_all_excel.to_excel(writer, index=False, sheet_name="전체재고현황")
-            
-        col3.write("")
-        col3.download_button("📥 전체 품목 엑셀 다운로드 (.xlsx)", out_excel.getvalue(), file_name=f"ERP_전체재고현황_{datetime.date.today()}.xlsx")
+
+        with col_p_btn:
+            st.write("")
+            st.download_button("📥 전체 품목 엑셀 다운로드 (.xlsx)", out_excel.getvalue(), file_name=f"ERP_전체재고현황_{datetime.date.today()}.xlsx")
+
+        # 💡 페이지 선택 드롭박스 바로 옆에 현재 페이지 자산 금액 작게 표시
+        st.markdown(f"<p style='color: #666; font-size: 13px; margin-top: -10px; margin-bottom: 15px;'>📌 현재 페이지(100건) 재고 자산 금액: <b>{current_page_asset_amt:,.0f} 원</b></p>", unsafe_allow_html=True)
+
+        col1, col2, _ = st.columns([2, 2, 2])
+        col1.metric("전체 등록 품목 수", f"{total_count} 개")
+        col2.metric("총 재고 자산 금액", f"{total_all_asset_amt:,.0f} 원")
 
         display_df = df_stock.drop(columns=["대분류"], errors="ignore").copy()
         if "현재재고" in display_df.columns:
@@ -598,7 +605,7 @@ if menu == MENU_STOCK:
         st.info("조건에 일치하는 품목 데이터가 없습니다.")
 
 # ---------------------------------------------------------
-# 메뉴 2: 입출고 등록 (페이징 추가)
+# 메뉴 2: 입출고 등록
 # ---------------------------------------------------------
 elif menu == MENU_TRANS:
     st.subheader("📝 자재 입출고 등록 및 이력 관리")
@@ -621,7 +628,6 @@ elif menu == MENU_TRANS:
         PAGE_SIZE_TRANS = 100
         total_trans_pages = max(1, math.ceil(total_trans_items / PAGE_SIZE_TRANS))
 
-        # 검색어가 없을 때만 페이지 선택 드롭박스 제공
         selected_trans_page = 1
         if not search_kw_trans.strip() and total_trans_pages > 1:
             col_tp1, _ = st.columns([1, 4])
@@ -865,7 +871,7 @@ elif menu == MENU_TRANS:
             st.info("선택한 기간 또는 검색 조건에 일치하는 입출고 내역이 없습니다.")
 
 # ---------------------------------------------------------
-# 메뉴 3: 품목 관리 (페이징 추가)
+# 메뉴 3: 품목 관리
 # ---------------------------------------------------------
 elif menu == MENU_ITEMS:
     st.subheader("🏷️ 품목 등록 및 수정 관리")
