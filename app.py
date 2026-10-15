@@ -1256,7 +1256,6 @@ elif menu == MENU_HISTORY:
     st.subheader("🔍 품목별 입출고 집계 및 소진 추이 조회")
     st.caption("💡 품목별로 총 입고량, 총 출고량, 현재 재고 수량 및 세부 입출고 이력을 요약하여 보여줍니다.")
 
-    # 💡 빠른 기간 선택 라디오 버튼 추가 (오늘 기준)
     today_date = datetime.date.today()
     period_option = st.radio(
         "⏱️ 빠른 기간 선택", 
@@ -1265,7 +1264,6 @@ elif menu == MENU_HISTORY:
         horizontal=True
     )
 
-    # 선택된 라디오 버튼에 따라 시작일 자동 계산
     if period_option == "1개월":
         default_start = today_date - datetime.timedelta(days=30)
     elif period_option == "3개월":
@@ -1282,7 +1280,6 @@ elif menu == MENU_HISTORY:
     col_f1, col_f2, col_f3 = st.columns([2, 1, 1])
     hist_search = col_f1.text_input("🔍 품목 검색 (품목코드, 품명 등)", "")
     
-    # 직접 설정일 때만 비활성화 없이 수정 가능하도록 구성 (라디오 선택 시 값 반영)
     start_date_filter = col_f2.date_input("조회 시작일", value=default_start)
     end_date_filter = col_f3.date_input("조회 종료일", value=today_date)
 
@@ -1302,7 +1299,7 @@ elif menu == MENU_HISTORY:
         chunk_size = 1000
         start = 0
         while True:
-            resp = db.supabase.table("stock_transactions").select("item_code, trans_type, quantity").range(start, start + chunk_size - 1).execute()
+            resp = db.supabase.table("stock_transactions").select("item_code, trans_type, quantity, unit_price, trans_date").range(start, start + chunk_size - 1).execute()
             chunk_data = resp.data or []
             all_trans_resp.extend(chunk_data)
             if len(chunk_data) < chunk_size:
@@ -1312,16 +1309,35 @@ elif menu == MENU_HISTORY:
         all_trans_resp = []
 
     item_calc_stock_map = {}
+    item_total_in_all_map = {}
+    item_latest_price_map = {}
+    item_latest_date_map = {}
+    item_latest_dt_obj_map = {}
+
     for t in all_trans_resp:
         ic = t.get("item_code")
         if not ic:
             continue
         q = safe_int_clean(t.get("quantity"), 0)
         ttype = str(t.get("trans_type", "")).strip().upper()
+        t_date = clean_date(t.get("trans_date", ""))
+        t_dt_obj = parse_standard_date(t_date)
+        t_price = safe_float(t.get("unit_price"), 0.0)
+
         if ic not in item_calc_stock_map:
             item_calc_stock_map[ic] = 0
+        if ic not in item_total_in_all_map:
+            item_total_in_all_map[ic] = 0
+
         if ttype in ["IN", "입고"]:
             item_calc_stock_map[ic] += q
+            item_total_in_all_map[ic] += q
+            if t_price > 0:
+                curr_dt_obj = item_latest_dt_obj_map.get(ic, datetime.date(1900, 1, 1))
+                if t_dt_obj >= curr_dt_obj:
+                    item_latest_dt_obj_map[ic] = t_dt_obj
+                    item_latest_date_map[ic] = t_date
+                    item_latest_price_map[ic] = t_price
         elif ttype in ["OUT", "출고"]:
             item_calc_stock_map[ic] -= q
 
@@ -1330,7 +1346,7 @@ elif menu == MENU_HISTORY:
         chunk_size = 1000
         start = 0
         while True:
-            items_resp = db.supabase.table("items").select("item_code, item_name, currency, model_spec, item_detail_no").order("item_code", desc=False).range(start, start + chunk_size - 1).execute()
+            items_resp = db.supabase.table("items").select("item_code, item_name, currency, model_spec, item_detail_no, unit_price, in_date").order("item_code", desc=False).range(start, start + chunk_size - 1).execute()
             chunk_items = items_resp.data or []
             for i in chunk_items:
                 icode_key = str(i.get("item_code", "")).strip().upper()
@@ -1338,7 +1354,9 @@ elif menu == MENU_HISTORY:
                     "name": i.get("item_name", "-"),
                     "currency": safe_str_clean(i.get("currency"), "KRW"),
                     "model_spec": safe_str_clean(i.get("model_spec"), "-"),
-                    "detail_no": safe_str_clean(i.get("item_detail_no"), "-")
+                    "detail_no": safe_str_clean(i.get("item_detail_no"), "-"),
+                    "unit_price": safe_float(i.get("unit_price"), 0.0),
+                    "in_date": clean_date(i.get("in_date", str(datetime.date.today())))
                 }
             if len(chunk_items) < chunk_size:
                 break
@@ -1370,20 +1388,30 @@ elif menu == MENU_HISTORY:
 
         filtered_trans_data.append(t)
 
-    if filtered_trans_data:
+    if filtered_trans_data or hist_search.strip():
         item_summary_map = {}
         for t in filtered_trans_data:
             icode = str(t.get("item_code", "-")).strip().upper()
             if icode not in item_summary_map:
-                info = item_info_map.get(icode, {"name": "-", "model_spec": "-", "detail_no": "-"})
-                current_stock = max(0, item_calc_stock_map.get(t.get("item_code", "-"), 0))
+                info = item_info_map.get(icode, {"name": "-", "model_spec": "-", "detail_no": "-", "currency": "KRW", "unit_price": 0.0, "in_date": str(datetime.date.today())})
+                current_stock = max(0, item_calc_stock_map.get(icode, 0))
+                total_in_all = item_total_in_all_map.get(icode, 0)
+                
+                latest_price = item_latest_price_map.get(icode, info["unit_price"])
+                latest_date = item_latest_date_map.get(icode, info["in_date"])
+                year = get_year_from_date(latest_date)
+                rate = get_exchange_rate_by_year(info["currency"], year)
+                stock_amt = round(current_stock * latest_price * rate)
+
                 item_summary_map[icode] = {
                     "품목코드": t.get("item_code", "-"),
                     "품명": info["name"],
-                    "규격/모델": info["model_spec"],
+                    "규격_모델": info["model_spec"],
+                    "총재고": total_in_all,
+                    "총 입고수량": 0,
+                    "총 출고수량": 0,
                     "현재재고": current_stock,
-                    "총입고량": 0,
-                    "총출고량": 0,
+                    "재고금액": stock_amt,
                     "거래건수": 0,
                     "상세내역": []
                 }
@@ -1392,9 +1420,9 @@ elif menu == MENU_HISTORY:
             qty = safe_int_clean(t.get("quantity"), 0)
             
             if t_type in ["IN", "입고"]:
-                item_summary_map[icode]["총입고량"] += qty
+                item_summary_map[icode]["총 입고수량"] += qty
             elif t_type in ["OUT", "출고"]:
-                item_summary_map[icode]["총출고량"] += qty
+                item_summary_map[icode]["총 출고수량"] += qty
             
             item_summary_map[icode]["거래건수"] += 1
             item_summary_map[icode]["상세내역"].append(t)
@@ -1404,48 +1432,92 @@ elif menu == MENU_HISTORY:
             summary_rows.append({
                 "품목코드": data["품목코드"],
                 "품명": data["품명"],
-                "규격/모델": data["규격/모델"],
-                "현재재고 / EA": data["현재재고"],
-                "📥 총 입고 수량 / EA": data["총입고량"],
-                "📤 총 출고 수량 / EA": data["총출고량"],
-                "거래 횟수": data["거래건수"]
+                "규격_모델": data["규격_모델"],
+                "총재고": data["총재고"],
+                "총 입고수량": data["총 입고수량"],
+                "총 출고수량": data["총 출고수량"],
+                "현재재고": data["현재재고"],
+                "재고금액": data["재고금액"]
             })
 
         df_summary = pd.DataFrame(summary_rows)
 
         st.markdown("### 📦 품목별 입출고 집계 요약")
-        
-        df_summary_display = df_summary.copy()
-        df_summary_display["현재재고 / EA"] = df_summary_display["현재재고 / EA"].apply(lambda x: f"{x:,} 개")
-        df_summary_display["📥 총 입고 수량 / EA"] = df_summary_display["📥 총 입고 수량 / EA"].apply(lambda x: f"{x:,} 개")
-        df_summary_display["📤 총 출고 수량 / EA"] = df_summary_display["📤 총 출고 수량 / EA"].apply(lambda x: f"{x:,} 개")
-        df_summary_display["거래 횟수"] = df_summary_display["거래 횟수"].apply(lambda x: f"{x} 회")
+        st.caption("💡 요약 리스트의 행을 클릭하시면 아래에 해당 품목의 상세 입출고 이력이 표시됩니다.")
 
-        st.dataframe(
-            df_summary_display,
+        # 💡 행 클릭 시 노란색 강조 및 현재재고 0개 빨간색 굵은 글씨 강조를 위한 Pandas Styler 적용
+        if "selected_summary_row" not in st.session_state:
+            st.session_state.selected_summary_row = 0
+
+        def highlight_summary_table(row):
+            styles = [''] * len(row)
+            is_selected = (row.name == st.session_state.selected_summary_row)
+            
+            # 행 선택 시 노란색 배경 및 테두리 스타일 적용
+            if is_selected:
+                styles = ['background-color: #FFF9C4; border: 2px solid #FBC02D; font-weight: bold;'] * len(row)
+            
+            return styles
+
+        def format_numeric_columns(val, col_name):
+            if col_name in ["총재고", "총 입고수량", "총 출고수량", "현재재고"]:
+                return f"{safe_int_clean(val):,} 개"
+            elif col_name == "재고금액":
+                return f"{safe_float(val):,.0f} 원"
+            return str(val)
+
+        # 표시용 데이터프레임 복사
+        df_summary_display = df_summary.copy()
+        df_summary_display["총재고"] = df_summary_display["총재고"].apply(lambda x: f"{x:,} 개")
+        df_summary_display["총 입고수량"] = df_summary_display["총 입고수량"].apply(lambda x: f"{x:,} 개")
+        df_summary_display["총 출고수량"] = df_summary_display["총 출고수량"].apply(lambda x: f"{x:,} 개")
+        df_summary_display["현재재고_raw"] = df_summary_display["현재재고"] # 조건 색상용 원본 유지
+        df_summary_display["현재재고"] = df_summary_display["현재재고"].apply(lambda x: f"{x:,} 개")
+        df_summary_display["재고금액"] = df_summary_display["재고금액"].apply(lambda x: f"{x:,.0f} 원")
+
+        styled_df = df_summary_display.drop(columns=["현재재고_raw"]).style.apply(highlight_summary_table, axis=1)
+
+        # 현재재고가 0개인 경우 빨간색 굵은 글씨 스타일 추가 적용
+        def color_zero_stock(val):
+            if "0 개" in str(val):
+                return 'color: #D32F2F; font-weight: bold;'
+            return ''
+
+        styled_df = styled_df.applymap(color_zero_stock, subset=["현재재고"])
+
+        summary_selection = st.dataframe(
+            styled_df,
             column_config={
                 "품목코드": st.column_config.TextColumn("품목코드", width="small"),
                 "품명": st.column_config.TextColumn("품명", width="medium"),
-                "규격/모델": st.column_config.TextColumn("규격/모델", width="medium"),
-                "현재재고 / EA": st.column_config.TextColumn("현재재고", width="small"),
-                "📥 총 입고 수량 / EA": st.column_config.TextColumn("📥 총 입고 수량", width="small"),
-                "📤 총 출고 수량 / EA": st.column_config.TextColumn("📤 총 출고 수량", width="small"),
-                "거래 횟수": st.column_config.TextColumn("거래 횟수", width="small")
+                "규격_모델": st.column_config.TextColumn("규격_모델", width="medium"),
+                "총재고": st.column_config.TextColumn("총재고", width="small"),
+                "총 입고수량": st.column_config.TextColumn("총 입고수량", width="small"),
+                "총 출고수량": st.column_config.TextColumn("총 출고수량", width="small"),
+                "현재재고": st.column_config.TextColumn("현재재고", width="small"),
+                "재고금액": st.column_config.TextColumn("재고금액", width="medium")
             },
             use_container_width=True,
-            hide_index=True
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row"
         )
 
+        sel_rows = summary_selection.selection.rows if summary_selection and hasattr(summary_selection, "selection") else []
+        if sel_rows:
+            st.session_state.selected_summary_row = sel_rows[0]
+
+        selected_row_idx = st.session_state.selected_summary_row
+        if selected_row_idx >= len(df_summary):
+            selected_row_idx = 0
+
+        target_icode = df_summary.iloc[selected_row_idx]["품목코드"]
+        target_summary = item_summary_map.get(target_icode.strip().upper(), None)
+
         st.markdown("---")
-        st.markdown("### 📋 품목별 상세 입출고 이력")
+        st.markdown(f"### 📋 선택 품목 [{target_icode}] 상세 입출고 이력")
         
-        item_options = {f"[{data['품목코드']}] {data['품명']} (입고:{data['총입고량']}개 / 출고:{data['총출고량']}개)": icode for icode, data in item_summary_map.items()}
-        selected_item_label = st.selectbox("🔎 상세 내역을 확인할 품목 선택:", list(item_options.keys()))
-        
-        if selected_item_label:
-            selected_icode = item_options[selected_item_label]
-            target_summary = item_summary_map[selected_icode]
-            
+        if target_summary and target_summary["상세내역"]:
             detail_rows = []
             for idx, t in enumerate(target_summary["상세내역"], 1):
                 icode = str(t.get("item_code", "-")).strip()
@@ -1495,7 +1567,7 @@ elif menu == MENU_HISTORY:
 
             styled_detail_df = df_detail.style.apply(highlight_trans_type, axis=1)
 
-            st.markdown(f"**선택 품목:** `[{selected_icode}] {target_summary['품명']}` (규격: {target_summary['규격/모델']})")
+            st.markdown(f"**선택 품목:** `[{target_icode}] {target_summary['품명']}` (규격: {target_summary['규격_모델']})")
             st.dataframe(
                 styled_detail_df,
                 column_config={
@@ -1512,9 +1584,11 @@ elif menu == MENU_HISTORY:
                 use_container_width=True,
                 hide_index=True
             )
+        else:
+            st.info("선택한 품목에 대한 해당 기간 내 세부 입출고 이력이 없습니다.")
 
         st.markdown("---")
-        col_down1, col_down2 = st.columns([2, 2])
+        col_down1, _ = st.columns([2, 2])
         with col_down1:
             out_excel = io.BytesIO()
             with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
