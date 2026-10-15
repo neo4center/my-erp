@@ -210,11 +210,10 @@ def render_a4_spec_card(item_code):
     df_out = pd.DataFrame(out_rows)
     category_full = f"{safe_str_clean(item.get('category_main'))} - {safe_str_clean(item.get('category_sub'))} - 선반:{safe_str_clean(item.get('shelf_no'))}"
 
-    # 💡 백지 현상을 완벽히 해결한 인쇄 전용 CSS 스타일
+    # 💡 인쇄 시 `#printable-spec-card` 영역만 출력하고 표 내부 스크롤을 해제하여 전체 내역이 인쇄되도록 설정
     st.markdown("""
     <style>
     @media print {
-        /* Streamlit 레이아웃 전체 숨기기 */
         header, footer, [data-testid="stSidebar"], [data-testid="stHeader"], div.stButton, iframe {
             display: none !important;
         }
@@ -229,17 +228,29 @@ def render_a4_spec_card(item_code):
             margin: 0 !important;
             max-width: 100% !important;
         }
-        /* 명세서 카드 영역만 출력되도록 설정 */
+        body * {
+            visibility: hidden !important;
+        }
+        #printable-spec-card, #printable-spec-card * {
+            visibility: visible !important;
+        }
         #printable-spec-card {
             display: block !important;
-            position: static !important;
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
             width: 100% !important;
             border: none !important;
             box-shadow: none !important;
             margin: 0 !important;
-            padding: 0 !important;
+            padding: 10px !important;
         }
-        /* 표 내부 내용이 잘리거나 숨겨지지 않도록 보장 */
+        /* 인쇄 시 스크롤 컨테이너 해제하여 모든 행 출력 */
+        div[data-testid="stDataFrame"] div[data-baseweb="tab-panel"], div[data-testid="stDataFrame"], div.element-container {
+            max-height: none !important;
+            overflow: visible !important;
+            height: auto !important;
+        }
         table, tr, td, th {
             page-break-inside: avoid;
         }
@@ -253,7 +264,6 @@ def render_a4_spec_card(item_code):
     </style>
     """, unsafe_allow_html=True)
 
-    # 💡 브라우저 인쇄 버튼 컴포넌트
     print_component_html = """
     <div style="text-align: right; margin-bottom: 10px;">
         <button onclick="window.parent.focus(); window.parent.print();" style="background-color: #ffffff; color: #333; border: 1px solid #ccc; padding: 8px 16px; border-radius: 6px; font-weight: bold; cursor: pointer; font-family: sans-serif;">🖨️ 명세서 인쇄/PDF 저장</button>
