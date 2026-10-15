@@ -1430,6 +1430,7 @@ elif menu == MENU_HISTORY:
         summary_rows = []
         for icode, data in item_summary_map.items():
             summary_rows.append({
+                "선택": False,
                 "품목코드": data["품목코드"],
                 "품명": data["품명"],
                 "규격_모델": data["규격_모델"],
@@ -1443,76 +1444,72 @@ elif menu == MENU_HISTORY:
         df_summary = pd.DataFrame(summary_rows)
 
         st.markdown("### 📦 품목별 입출고 집계 요약")
-        st.caption("💡 요약 리스트의 행을 클릭하시면 아래에 해당 품목의 상세 입출고 이력이 표시됩니다.")
+        st.caption("💡 좌측 체크박스를 선택하거나 표 안의 셀을 클릭하시면 해당 품목 행 전체가 노란색으로 강조되며, 아래에 상세 입출고 이력이 표시됩니다.")
 
-        # 💡 행 클릭 시 노란색 강조 및 현재재고 0개 빨간색 굵은 글씨 강조를 위한 Pandas Styler 적용
-        if "selected_summary_row" not in st.session_state:
-            st.session_state.selected_summary_row = 0
+        if "selected_icode" not in st.session_state:
+            st.session_state.selected_icode = df_summary.iloc[0]["품목코드"] if not df_summary.empty else ""
 
-        def highlight_summary_table(row):
-            styles = [''] * len(row)
-            is_selected = (row.name == st.session_state.selected_summary_row)
+        # 💡 HTML/CSS 기반 커스텀 인터랙티브 테이블 생성 (셀 클릭 및 체크박스 선택 시 행 전체 노란색 강조 지원)
+        table_html = """
+        <style>
+        .custom-summary-table { width: 100%; border-collapse: collapse; font-family: sans-serif; font-size: 14px; background-color: #ffffff; color: #111; }
+        .custom-summary-table th { background-color: #f8f9fa; border: 1px solid #ddd; padding: 10px; text-align: center; font-weight: bold; }
+        .custom-summary-table td { border: 1px solid #ddd; padding: 8px 10px; text-align: center; cursor: pointer; }
+        .custom-summary-table tr:hover td { background-color: #f1f8ff; }
+        .row-highlight td { background-color: #FFF9C4 !important; border-top: 2px solid #FBC02D !important; border-bottom: 2px solid #FBC02D !important; font-weight: bold; }
+        .zero-stock { color: #D32F2F; font-weight: bold; }
+        </style>
+        <table class="custom-summary-table">
+            <thead>
+                <tr>
+                    <th>선택</th>
+                    <th>품목코드</th>
+                    <th>품명</th>
+                    <th>규격_모델</th>
+                    <th>총재고</th>
+                    <th>총 입고수량</th>
+                    <th>총 출고수량</th>
+                    <th>현재재고</th>
+                    <th>재고금액</th>
+                </tr>
+            </thead>
+            <tbody>
+        """
+
+        # Streamlit 쿼리 파라미터나 상태를 활용한 행 클릭 인터랙션 처리
+        query_params = st.query_params
+        clicked_code = query_params.get("sel_code", st.session_state.selected_icode)
+        if isinstance(clicked_code, list):
+            clicked_code = clicked_code[0]
+
+        for _, row in df_summary.iterrows():
+            icode = row["품목코드"]
+            is_hl = (str(icode).strip().upper() == str(clicked_code).strip().upper())
+            row_class = "row-highlight" if is_hl else ""
             
-            # 행 선택 시 노란색 배경 및 테두리 스타일 적용
-            if is_selected:
-                styles = ['background-color: #FFF9C4; border: 2px solid #FBC02D; font-weight: bold;'] * len(row)
+            stock_val = row["현재재고"]
+            stock_class = "zero-stock" if stock_val == 0 else ""
             
-            return styles
+            # 셀 클릭 시 해당 품목 코드가 쿼리파라미터로 전달되어 페이지가 리로드되며 전체 행이 노란색으로 강조됨
+            table_html += f"""
+            <tr class="{row_class}">
+                <td><input type="radio" name="row_select" {"checked" if is_hl else ""} onclick="window.location.href='?sel_code={icode}';"></td>
+                <td onclick="window.location.href='?sel_code={icode}';"><code>{icode}</code></td>
+                <td onclick="window.location.href='?sel_code={icode}';"><b>{row['품명']}</b></td>
+                <td onclick="window.location.href='?sel_code={icode}';">{row['규격_모델']}</td>
+                <td onclick="window.location.href='?sel_code={icode}';">{row['총재고']:,} 개</td>
+                <td onclick="window.location.href='?sel_code={icode}';">{row['총 입고수량']:,} 개</td>
+                <td onclick="window.location.href='?sel_code={icode}';">{row['총 출고수량']:,} 개</td>
+                <td onclick="window.location.href='?sel_code={icode}';" class="{stock_class}">{stock_val:,} 개</td>
+                <td onclick="window.location.href='?sel_code={icode}';">{row['재고금액']:,.0f} 원</td>
+            </tr>
+            """
+        table_html += "</tbody></table>"
+        
+        components.html(table_html, height=min(400, 70 + len(df_summary) * 42), scrolling=True)
 
-        def format_numeric_columns(val, col_name):
-            if col_name in ["총재고", "총 입고수량", "총 출고수량", "현재재고"]:
-                return f"{safe_int_clean(val):,} 개"
-            elif col_name == "재고금액":
-                return f"{safe_float(val):,.0f} 원"
-            return str(val)
-
-        # 표시용 데이터프레임 복사
-        df_summary_display = df_summary.copy()
-        df_summary_display["총재고"] = df_summary_display["총재고"].apply(lambda x: f"{x:,} 개")
-        df_summary_display["총 입고수량"] = df_summary_display["총 입고수량"].apply(lambda x: f"{x:,} 개")
-        df_summary_display["총 출고수량"] = df_summary_display["총 출고수량"].apply(lambda x: f"{x:,} 개")
-        df_summary_display["현재재고_raw"] = df_summary_display["현재재고"] # 조건 색상용 원본 유지
-        df_summary_display["현재재고"] = df_summary_display["현재재고"].apply(lambda x: f"{x:,} 개")
-        df_summary_display["재고금액"] = df_summary_display["재고금액"].apply(lambda x: f"{x:,.0f} 원")
-
-        styled_df = df_summary_display.drop(columns=["현재재고_raw"]).style.apply(highlight_summary_table, axis=1)
-
-        # 현재재고가 0개인 경우 빨간색 굵은 글씨 스타일 추가 적용
-        def color_zero_stock(val):
-            if "0 개" in str(val):
-                return 'color: #D32F2F; font-weight: bold;'
-            return ''
-
-        styled_df = styled_df.map(color_zero_stock, subset=["현재재고"])
-
-        summary_selection = st.dataframe(
-            styled_df,
-            column_config={
-                "품목코드": st.column_config.TextColumn("품목코드", width="small"),
-                "품명": st.column_config.TextColumn("품명", width="medium"),
-                "규격_모델": st.column_config.TextColumn("규격_모델", width="medium"),
-                "총재고": st.column_config.TextColumn("총재고", width="small"),
-                "총 입고수량": st.column_config.TextColumn("총 입고수량", width="small"),
-                "총 출고수량": st.column_config.TextColumn("총 출고수량", width="small"),
-                "현재재고": st.column_config.TextColumn("현재재고", width="small"),
-                "재고금액": st.column_config.TextColumn("재고금액", width="medium")
-            },
-            use_container_width=True,
-            hide_index=True,
-            on_select="rerun",
-            selection_mode="single-row"
-        )
-
-        sel_rows = summary_selection.selection.rows if summary_selection and hasattr(summary_selection, "selection") else []
-        if sel_rows:
-            st.session_state.selected_summary_row = sel_rows[0]
-
-        selected_row_idx = st.session_state.selected_summary_row
-        if selected_row_idx >= len(df_summary):
-            selected_row_idx = 0
-
-        target_icode = df_summary.iloc[selected_row_idx]["품목코드"]
-        target_summary = item_summary_map.get(target_icode.strip().upper(), None)
+        target_icode = clicked_code if clicked_code else df_summary.iloc[0]["품목코드"]
+        target_summary = item_summary_map.get(str(target_icode).strip().upper(), None)
 
         st.markdown("---")
         st.markdown(f"### 📋 선택 품목 [{target_icode}] 상세 입출고 이력")
@@ -1592,7 +1589,7 @@ elif menu == MENU_HISTORY:
         with col_down1:
             out_excel = io.BytesIO()
             with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
-                df_summary.to_excel(writer, index=False, sheet_name="품목별입출고집계")
+                df_summary.drop(columns=["선택"], errors="ignore").to_excel(writer, index=False, sheet_name="품목별입출고집계")
             st.download_button(
                 label="📥 품목별 입출고 집계 엑셀 다운로드 (.xlsx)",
                 data=out_excel.getvalue(),
