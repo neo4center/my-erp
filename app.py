@@ -1283,6 +1283,7 @@ elif menu == MENU_HISTORY:
     start_date_filter = col_f2.date_input("조회 시작일", value=default_start)
     end_date_filter = col_f3.date_input("조회 종료일", value=today_date)
 
+    # 모든 트랜잭션 데이터 페이징 없이 전체 수집
     all_trans_resp = []
     try:
         chunk_size = 1000
@@ -1361,6 +1362,7 @@ elif menu == MENU_HISTORY:
     for t in all_trans_resp:
         icode = str(t.get("item_code", "-")).strip().upper()
         
+        # 출고 1개 이상 품목 대상
         if item_out_count_map.get(icode, 0) < 1:
             continue
 
@@ -1494,6 +1496,8 @@ elif menu == MENU_HISTORY:
         st.markdown("---")
         st.markdown(f"### 📋 선택 품목 [{target_icode}] 상세 입출고 이력 (기초재고 포함)")
         
+        raw_export_detail_rows = []
+
         if target_summary and target_summary["상세내역"]:
             sorted_details = sorted(target_summary["상세내역"], key=lambda x: str(x.get("trans_date", "")), reverse=False)
 
@@ -1533,6 +1537,7 @@ elif menu == MENU_HISTORY:
                 if raw_req in ["-", "초기재고일괄등록", "시스템입고", "None", ""]:
                     raw_req = "기초재고등록" if t_type in ["IN", "입고"] else "-"
 
+                # UI 화면용 데이터 (단위 텍스트 포함)
                 detail_rows.append({
                     "No": idx,
                     "일자": t_date,
@@ -1545,7 +1550,22 @@ elif menu == MENU_HISTORY:
                     "비고": safe_str_clean(t.get("remark"), "-")
                 })
 
-            # 상단 요약 정보 표시 (태그 이스케이프 및 구조 보정)
+                # 엑셀 추출용 순수 데이터 (단위 문자 제거, 숫자형 보존)
+                raw_export_detail_rows.append({
+                    "품목코드": target_icode,
+                    "품명": target_summary['품명'],
+                    "No": idx,
+                    "일자": t_date,
+                    "구분": type_display,
+                    "수량": qty,
+                    "원화환산액": unit_krw,
+                    "총금액": total_krw,
+                    "담당자": raw_mgr,
+                    "요청자": raw_req,
+                    "비고": safe_str_clean(t.get("remark"), "-")
+                })
+
+            # 상단 요약 정보
             out_info_html = f"🔥 <b>총 출고수량:</b> <span style='color: #D32F2F; font-weight: bold;'>{calc_sub_out_qty:,} 개</span> &nbsp;|&nbsp; 💰 <b>총 금액:</b> <span style='color: #D32F2F; font-weight: bold;'>{calc_sub_out_amt:,.0f} 원</span>"
             
             stock_info_html = ""
@@ -1562,7 +1582,27 @@ elif menu == MENU_HISTORY:
             """
             st.markdown(summary_html, unsafe_allow_html=True)
 
-            df_detail = pd.DataFrame(detail_rows)
+            # 상세 이력 페이징 처리 (100건 단위)
+            total_details_count = len(detail_rows)
+            PAGE_SIZE_DETAIL = 100
+            total_detail_pages = math.ceil(total_details_count / PAGE_SIZE_DETAIL)
+
+            if total_detail_pages > 1:
+                col_dp1, col_dp2 = st.columns([2, 3])
+                with col_dp1:
+                    selected_detail_page = st.selectbox(
+                        "📄 상세 이력 페이지 선택 (100건씩 보기)",
+                        list(range(1, total_detail_pages + 1)),
+                        format_func=lambda x: f"{x} 페이지 ({(x-1)*100+1} ~ {min(x*100, total_details_count)}건 / 총 {total_details_count}건)",
+                        key="detail_history_page_select"
+                    )
+                d_start_idx = (selected_detail_page - 1) * PAGE_SIZE_DETAIL
+                d_end_idx = d_start_idx + PAGE_SIZE_DETAIL
+                paged_detail_rows = detail_rows[d_start_idx:d_end_idx]
+            else:
+                paged_detail_rows = detail_rows
+
+            df_detail = pd.DataFrame(paged_detail_rows)
 
             def highlight_trans_type(row):
                 val = str(row.get("구분", ""))
@@ -1598,11 +1638,18 @@ elif menu == MENU_HISTORY:
         with col_down1:
             out_excel = io.BytesIO()
             with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
+                # 시트 1: 품목별 입출고 집계 요약
                 df_summary.to_excel(writer, index=False, sheet_name="품목별입출고집계")
+                
+                # 시트 2: 선택 품목 상세 입출고 이력 (단위 문자가 제거된 순수 숫자로 계산 가능)
+                if raw_export_detail_rows:
+                    df_raw_detail = pd.DataFrame(raw_export_detail_rows)
+                    df_raw_detail.to_excel(writer, index=False, sheet_name="선택품목_상세입출고이력")
+
             st.download_button(
-                label="📥 품목별 입출고 집계 엑셀 다운로드 (.xlsx)",
+                label="📥 품목별 입출고 집계 및 상세 이력 엑셀 다운로드 (.xlsx)",
                 data=out_excel.getvalue(),
-                file_name=f"ERP_품목별입출고집계_{datetime.date.today()}.xlsx"
+                file_name=f"ERP_품목별입출고집계 및 이력_{target_icode}_{datetime.date.today()}.xlsx"
             )
     else:
         st.info("조건에 일치하는 출고 이력이 있는 품목 데이터가 없습니다.")
