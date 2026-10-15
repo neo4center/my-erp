@@ -1254,7 +1254,7 @@ elif menu == MENU_ITEMS:
 # ---------------------------------------------------------
 elif menu == MENU_HISTORY:
     st.subheader("🔍 품목별 입출고 집계 및 소진 추이 조회")
-    st.caption("💡 품목별로 총 입고량, 총 출고량, 현재 재고 수량 및 세부 입출고 이력을 요약하여 보여줍니다.")
+    st.caption("💡 품목별로 총 입고량(기초재고 포함), 총 출고량, 현재 재고 수량 및 세부 입출고 이력을 요약하여 보여줍니다. (단, 출고 수량이 1개 이상인 품목 대상)")
 
     today_date = datetime.date.today()
     period_option = st.radio(
@@ -1283,23 +1283,13 @@ elif menu == MENU_HISTORY:
     start_date_filter = col_f2.date_input("조회 시작일", value=default_start)
     end_date_filter = col_f3.date_input("조회 종료일", value=today_date)
 
-    try:
-        h_query = db.supabase.table("stock_transactions").select("*") \
-            .neq("requester", "-") \
-            .neq("requester", "초기재고일괄등록") \
-            .neq("requester", "시스템입고") \
-            .order("trans_date", desc=True)
-        
-        trans_data = h_query.limit(5000).execute().data or []
-    except Exception:
-        trans_data = []
-
+    # 모든 트랜잭션 데이터를 가져오되, 기초재고를 포함하여 가져옴 (requester 필터 완화)
     all_trans_resp = []
     try:
         chunk_size = 1000
         start = 0
         while True:
-            resp = db.supabase.table("stock_transactions").select("item_code, trans_type, quantity, unit_price, trans_date").range(start, start + chunk_size - 1).execute()
+            resp = db.supabase.table("stock_transactions").select("*").range(start, start + chunk_size - 1).execute()
             chunk_data = resp.data or []
             all_trans_resp.extend(chunk_data)
             if len(chunk_data) < chunk_size:
@@ -1313,6 +1303,7 @@ elif menu == MENU_HISTORY:
     item_latest_price_map = {}
     item_latest_date_map = {}
     item_latest_dt_obj_map = {}
+    item_out_count_map = {} # 품목별 출고 횟수 또는 총 출고 수량 체크용
 
     for t in all_trans_resp:
         ic = t.get("item_code")
@@ -1328,6 +1319,8 @@ elif menu == MENU_HISTORY:
             item_calc_stock_map[ic] = 0
         if ic not in item_total_in_all_map:
             item_total_in_all_map[ic] = 0
+        if ic not in item_out_count_map:
+            item_out_count_map[ic] = 0
 
         if ttype in ["IN", "입고"]:
             item_calc_stock_map[ic] += q
@@ -1340,6 +1333,7 @@ elif menu == MENU_HISTORY:
                     item_latest_price_map[ic] = t_price
         elif ttype in ["OUT", "출고"]:
             item_calc_stock_map[ic] -= q
+            item_out_count_map[ic] += q # 출고 수량 누적
 
     item_info_map = {}
     try:
@@ -1365,13 +1359,18 @@ elif menu == MENU_HISTORY:
         pass
 
     filtered_trans_data = []
-    for t in trans_data:
+    for t in all_trans_resp:
+        icode = str(t.get("item_code", "-")).strip().upper()
+        
+        # 조건 1: 출고 수량이 총 1개 이상인 품목만 대상에 포함
+        if item_out_count_map.get(icode, 0) < 1:
+            continue
+
         t_dt = parse_standard_date(t.get("trans_date", ""))
         if not (start_date_filter <= t_dt <= end_date_filter):
             continue
 
-        icode = str(t.get("item_code", "-")).strip()
-        info = item_info_map.get(icode.upper(), {"name": "-", "currency": "KRW", "model_spec": "-", "detail_no": "-"})
+        info = item_info_map.get(icode, {"name": "-", "currency": "KRW", "model_spec": "-", "detail_no": "-"})
         iname = info["name"]
 
         if hist_search.strip():
@@ -1395,7 +1394,7 @@ elif menu == MENU_HISTORY:
             if icode not in item_summary_map:
                 info = item_info_map.get(icode, {"name": "-", "model_spec": "-", "detail_no": "-", "currency": "KRW", "unit_price": 0.0, "in_date": str(datetime.date.today())})
                 current_stock = max(0, item_calc_stock_map.get(icode, 0))
-                total_in_all = item_total_in_all_map.get(icode, 0)
+                total_in_all = item_total_in_all_map.get(icode, 0) # 기초재고 + 신규입고 합산 수량
                 
                 latest_price = item_latest_price_map.get(icode, info["unit_price"])
                 latest_date = item_latest_date_map.get(icode, info["in_date"])
@@ -1442,8 +1441,8 @@ elif menu == MENU_HISTORY:
 
         df_summary = pd.DataFrame(summary_rows)
 
-        st.markdown("### 📦 품목별 입출고 집계 요약")
-        st.caption("💡 요약 리스트의 행을 클릭하시면 아래에 해당 품목의 상세 입출고 이력이 표시됩니다.")
+        st.markdown("### 📦 품목별 입출고 집계 요약 (출고 1개 이상 품목)")
+        st.markdown("---")
 
         if "selected_summary_index" not in st.session_state:
             st.session_state.selected_summary_index = 0
@@ -1495,11 +1494,14 @@ elif menu == MENU_HISTORY:
         target_summary = item_summary_map.get(str(target_icode).strip().upper(), None)
 
         st.markdown("---")
-        st.markdown(f"### 📋 선택 품목 [{target_icode}] 상세 입출고 이력")
+        st.markdown(f"### 📋 선택 품목 [{target_icode}] 상세 입출고 이력 (기초재고 포함)")
         
         if target_summary and target_summary["상세내역"]:
+            # 일자 최신순 정렬 (날짜 기준 내림차순)
+            sorted_details = sorted(target_summary["상세내역"], key=lambda x: str(x.get("trans_date", "")), reverse=True)
+
             detail_rows = []
-            for idx, t in enumerate(target_summary["상세내역"], 1):
+            for idx, t in enumerate(sorted_details, 1):
                 icode = str(t.get("item_code", "-")).strip()
                 info = item_info_map.get(icode.upper(), {"name": "-", "currency": "KRW"})
                 curr = info["currency"]
@@ -1523,6 +1525,10 @@ elif menu == MENU_HISTORY:
                     for pos in POSITIONS:
                         raw_mgr = raw_mgr.replace(pos, "").strip()
 
+                raw_req = safe_str_clean(t.get("requester"), "-")
+                if raw_req in ["-", "초기재고일괄등록", "시스템입고", "None", ""]:
+                    raw_req = "기초재고등록" if t_type in ["IN", "입고"] else "-"
+
                 detail_rows.append({
                     "No": idx,
                     "일자": t_date,
@@ -1531,7 +1537,7 @@ elif menu == MENU_HISTORY:
                     "원화환산액": f"{unit_krw:,} 원",
                     "총금액": f"{total_krw:,} 원",
                     "담당자": raw_mgr,
-                    "요청자": safe_str_clean(t.get("requester"), "-"),
+                    "요청자": raw_req,
                     "비고": safe_str_clean(t.get("remark"), "-")
                 })
 
@@ -1579,7 +1585,7 @@ elif menu == MENU_HISTORY:
                 file_name=f"ERP_품목별입출고집계_{datetime.date.today()}.xlsx"
             )
     else:
-        st.info("조건에 일치하는 운영 입출고 이력이 없습니다.")
+        st.info("조건에 일치하는 출고 이력이 있는 품목 데이터가 없습니다.")
 
 # ---------------------------------------------------------
 # 메뉴 5: 환율 설정
