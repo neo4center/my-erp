@@ -47,6 +47,23 @@ def clean_date(val):
     s = str(val).strip().split("T")[0].split(" ")[0]
     return s if len(s) >= 8 else str(datetime.date.today())
 
+def parse_standard_date(date_str):
+    """YY.MM.DD, YYYY-MM-DD 등 다양한 날짜 형식을 표준 datetime.date로 안전하게 파싱"""
+    if not date_str:
+        return datetime.date.today()
+    s = str(date_str).strip().split("T")[0].split(" ")[0]
+    parts = re.split(r'[-./]', s)
+    if len(parts) == 3:
+        p1, p2, p3 = parts[0], parts[1], parts[2]
+        try:
+            year = 2000 + int(p1) if len(p1) == 2 and int(p1) < 50 else (1900 + int(p1) if len(p1) == 2 else int(p1))
+            month = int(p2)
+            day = int(p3)
+            return datetime.date(year, month, day)
+        except:
+            pass
+    return datetime.date.today()
+
 def clean_val(val, default="-"):
     if pd.isna(val) or val is None:
         return default
@@ -70,19 +87,8 @@ def generate_next_item_code():
         return f"ITEM_{int(datetime.datetime.now().timestamp())}"
 
 def get_year_from_date(date_str):
-    if not date_str:
-        return datetime.date.today().year
-    s = str(date_str).strip()
-    nums = re.findall(r'\d+', s)
-    if not nums:
-        return datetime.date.today().year
-    candidate = nums[0]
-    if len(candidate) == 4:
-        return int(candidate)
-    elif len(candidate) == 2:
-        yy = int(candidate)
-        return 2000 + yy if yy < 50 else 1900 + yy
-    return datetime.date.today().year
+    dt = parse_standard_date(date_str)
+    return dt.year
 
 @st.cache_data(ttl=600)
 def get_cached_exchange_rates():
@@ -113,7 +119,8 @@ def render_a4_spec_card(item_code):
         return
     item = item_resp.data[0]
 
-    trans_resp = db.supabase.table("stock_transactions").select("*").eq("item_code", item_code).order("trans_date", desc=False).execute()
+    # id 기준 오름차순 정렬하여 시간순서 확보
+    trans_resp = db.supabase.table("stock_transactions").select("*").eq("item_code", item_code).order("id", desc=False).execute()
     trans_data = trans_resp.data or []
     
     calc_stock = 0
@@ -128,20 +135,23 @@ def render_a4_spec_card(item_code):
     
     latest_in_price = base_price
     latest_in_date = base_in_date
+    latest_dt_obj = parse_standard_date(base_in_date)
     
-    # 💡 입고 데이터 중 가장 최신 날짜의 단가를 추적
+    # 입고(IN) 데이터 중 날짜 기준 가장 최신의 단가와 날짜 확정
     for t in trans_data:
         t_type = str(t.get("trans_type", "")).strip().upper()
         if t_type in ["IN", "입고"]:
-            t_date = clean_date(t.get("trans_date", ""))
             t_price = safe_float(t.get("unit_price"), 0.0)
-            if t_date and t_price > 0:
-                if t_date >= latest_in_date:
-                    latest_in_date = t_date
+            t_date_str = clean_date(t.get("trans_date", ""))
+            t_dt_obj = parse_standard_date(t_date_str)
+            if t_price > 0:
+                if t_dt_obj >= latest_dt_obj:
+                    latest_dt_obj = t_dt_obj
+                    latest_in_date = t_date_str
                     latest_in_price = t_price
 
     representative_price = latest_in_price
-    representative_year = get_year_from_date(latest_in_date)
+    representative_year = latest_dt_obj.year
     representative_rate = get_exchange_rate_by_year(curr, representative_year)
 
     for t in trans_data:
@@ -202,14 +212,13 @@ def render_a4_spec_card(item_code):
     df_out = pd.DataFrame(out_rows)
     category_full = f"{safe_str_clean(item.get('category_main'))} - {safe_str_clean(item.get('category_sub'))} - 선반:{safe_str_clean(item.get('shelf_no'))}"
 
-    # 💡 인쇄 스타일 및 자재품목명세서 출력 영역 CSS 정의
     st.markdown("""
     <style>
     @media print {
         body * { visibility: hidden; }
         #printable-spec-card, #printable-spec-card * { visibility: visible; }
-        #printable-spec-card { position: absolute; left: 0; top: 0; width: 100%; border: none !important; }
-        .stButton, header, footer { display: none !important; }
+        #printable-spec-card { position: absolute; left: 0; top: 0; width: 100%; border: none !important; margin: 0; padding: 10px; }
+        .no-print { display: none !important; }
     }
     .a4-card { background-color: #ffffff; border: 2px solid #333; border-radius: 8px; padding: 25px; margin-top: 10px; color: #111; }
     .a4-header { text-align: center; border-bottom: 3px double #333; padding-bottom: 10px; margin-bottom: 20px; }
@@ -217,14 +226,20 @@ def render_a4_spec_card(item_code):
     .info-table th, .info-table td { border: 1px solid #ccc; padding: 8px 12px; font-size: 14px; }
     .info-table th { background-color: #f4f4f4; font-weight: bold; width: 18%; text-align: center; }
     .stock-calc-banner { background-color: #E3F2FD; border: 2px solid #2196F3; border-radius: 8px; padding: 15px; text-align: center; font-size: 18px; font-weight: bold; color: #0D47A1; margin: 20px 0; }
+    .print-btn-custom {
+        background-color: #ffffff; color: #333; border: 1px solid #ccc; padding: 10px 20px;
+        border-radius: 6px; font-weight: bold; cursor: pointer; float: right; margin-bottom: 15px;
+    }
+    .print-btn-custom:hover { background-color: #f0f0f0; border-color: #999; }
     </style>
     """, unsafe_allow_html=True)
 
-    # 💡 브라우저 인쇄/PDF 저장 버튼
-    col_prt1, col_prt2 = st.columns([4, 1])
-    with col_prt2:
-        if st.button("🖨️ 명세서 인쇄/PDF 저장", use_container_width=True):
-            st.markdown("<script>window.print();</script>", unsafe_allow_html=True)
+    st.markdown("""
+    <div class="no-print" style="text-align: right;">
+        <button onclick="window.print();" class="print-btn-custom">🖨️ 명세서 인쇄/PDF 저장</button>
+    </div>
+    <div style="clear: both;"></div>
+    """, unsafe_allow_html=True)
 
     with st.container():
         st.markdown("<div id='printable-spec-card' class='a4-card'>", unsafe_allow_html=True)
@@ -254,7 +269,6 @@ def render_a4_spec_card(item_code):
 
         st.markdown("---")
 
-        # 💡 재고금액 산출 강조 배너 추가 ([재고금액] : 입고총금액 - 출고총금액)
         net_stock_valuation = total_in_amt - total_out_amt
         st.markdown(f"""
         <div class="stock-calc-banner">
@@ -440,7 +454,7 @@ if menu == MENU_STOCK:
         chunk_size = 1000
         start = 0
         while True:
-            resp = db.supabase.table("stock_transactions").select("item_code, trans_type, quantity, unit_price, trans_date").range(start, start + chunk_size - 1).execute()
+            resp = db.supabase.table("stock_transactions").select("item_code, trans_type, quantity, unit_price, trans_date").order("id", desc=False).range(start, start + chunk_size - 1).execute()
             chunk_data = resp.data or []
             all_trans_resp.extend(chunk_data)
             if len(chunk_data) < chunk_size:
@@ -452,6 +466,7 @@ if menu == MENU_STOCK:
     item_calc_stock_map = {}
     item_latest_price_map = {}
     item_latest_date_map = {}
+    item_latest_dt_obj_map = {}
 
     for t in all_trans_resp:
         ic = t.get("item_code")
@@ -460,6 +475,7 @@ if menu == MENU_STOCK:
         q = safe_int_clean(t.get("quantity"), 0)
         ttype = str(t.get("trans_type", "")).strip().upper()
         t_date = clean_date(t.get("trans_date", ""))
+        t_dt_obj = parse_standard_date(t_date)
         t_price = safe_float(t.get("unit_price"), 0.0)
 
         if ic not in item_calc_stock_map:
@@ -467,8 +483,9 @@ if menu == MENU_STOCK:
         if ttype in ["IN", "입고"]:
             item_calc_stock_map[ic] += q
             if t_price > 0:
-                curr_latest_date = item_latest_date_map.get(ic, "")
-                if not curr_latest_date or t_date >= curr_latest_date:
+                curr_dt_obj = item_latest_dt_obj_map.get(ic, datetime.date(1900, 1, 1))
+                if t_dt_obj >= curr_dt_obj:
+                    item_latest_dt_obj_map[ic] = t_dt_obj
                     item_latest_date_map[ic] = t_date
                     item_latest_price_map[ic] = t_price
         elif ttype in ["OUT", "출고"]:
@@ -840,12 +857,7 @@ elif menu == MENU_TRANS:
 
         filtered_edit_list = []
         for t in all_trans_list:
-            t_date_str = str(t.get("trans_date", "")).split(" ")[0]
-            try:
-                t_dt = datetime.datetime.strptime(t_date_str, "%Y-%m-%d").date()
-            except:
-                t_dt = datetime.date.today()
-
+            t_dt = parse_standard_date(t.get("trans_date", ""))
             if not (edit_start_date <= t_dt <= edit_end_date):
                 continue
 
@@ -867,12 +879,7 @@ elif menu == MENU_TRANS:
                 default_radio_idx = 0 if current_t_type in ["IN", "입고"] else 1
                 
                 e_type_radio = col1.radio("입출고 구분", ["입고", "출고"], index=default_radio_idx, horizontal=True)
-                
-                try:
-                    default_d = datetime.datetime.strptime(str(target_t.get("trans_date", "")).split(" ")[0], "%Y-%m-%d").date()
-                except:
-                    default_d = datetime.date.today()
-                e_date = col2.date_input("일자", value=default_d)
+                e_date = col2.date_input("일자", value=parse_standard_date(target_t.get("trans_date", "")))
 
                 col3, col4 = st.columns(2)
                 e_qty = col3.number_input("수량", min_value=1, value=safe_int_clean(target_t.get("quantity"), 1), step=1)
@@ -1223,12 +1230,7 @@ elif menu == MENU_HISTORY:
 
     filtered_trans_data = []
     for t in trans_data:
-        t_date_str = str(t.get("trans_date", "")).split(" ")[0]
-        try:
-            t_dt = datetime.datetime.strptime(t_date_str, "%Y-%m-%d").date()
-        except:
-            t_dt = datetime.date.today()
-
+        t_dt = parse_standard_date(t.get("trans_date", ""))
         if not (start_date_filter <= t_dt <= end_date_filter):
             continue
 
@@ -1405,8 +1407,12 @@ elif menu == MENU_HISTORY:
                 file_name=f"ERP_품목별입출고집계_{datetime.date.today()}.xlsx"
             )
         with col_down2:
-            if st.button("🖨️ 브라우저 인쇄 / PDF 저장 (Print)"):
-                st.markdown("<script>window.print();</script>", unsafe_allow_html=True)
+            st.markdown("""
+            <div style="text-align: right;">
+                <button onclick="window.print();" class="print-btn-custom">🖨️ 인쇄/PDF 저장</button>
+            </div>
+            <div style="clear: both;"></div>
+            """, unsafe_allow_html=True)
     else:
         st.info("조건에 일치하는 운영 입출고 이력이 없습니다.")
 
