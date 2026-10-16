@@ -122,6 +122,43 @@ def render_a4_spec_card(item_code):
     trans_resp = db.supabase.table("stock_transactions").select("*").eq("item_code", item_code).order("id", desc=False).execute()
     trans_data = trans_resp.data or []
     
+    # ---------------------------------------------------------
+    # 기간 필터 UI 추가 (전체 기간 기본 선택)
+    # ---------------------------------------------------------
+    st.markdown("""
+    <div style="background-color: #f1f8e9; border: 1px solid #c5e1a5; padding: 12px 18px; border-radius: 8px; margin-bottom: 15px;">
+        <span style="font-size: 15px; font-weight: bold; color: #33691e;">📅 자재품목명세서 입출고 기간 필터 선택</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    spec_period_opt = st.radio(
+        "조회 기간 선택",
+        ["전체", "3개월", "6개월", "1년", "기간설정"],
+        index=0,
+        horizontal=True,
+        key=f"spec_period_radio_{item_code}"
+    )
+
+    today_dt = datetime.date.today()
+    if spec_period_opt == "3개월":
+        filter_start_dt = today_dt - datetime.timedelta(days=90)
+        filter_end_dt = today_dt
+    elif spec_period_opt == "6개월":
+        filter_start_dt = today_dt - datetime.timedelta(days=180)
+        filter_end_dt = today_dt
+    elif spec_period_opt == "1년":
+        filter_start_dt = today_dt - datetime.timedelta(days=365)
+        filter_end_dt = today_dt
+    elif spec_period_opt == "기간설정":
+        cc1, cc2 = st.columns(2)
+        filter_start_dt = cc1.date_input("시작일", value=today_dt - datetime.timedelta(days=180), key=f"spec_start_{item_code}")
+        filter_end_dt = cc2.date_input("종료일", value=today_dt, key=f"spec_end_{item_code}")
+    else:  # 전체
+        filter_start_dt = datetime.date(2020, 1, 1)
+        filter_end_dt = today_dt
+
+    period_badge_text = f"전체 기간 (~{today_dt})" if spec_period_opt == "전체" else f"선택 기간: {filter_start_dt} ~ {filter_end_dt}"
+
     calc_stock = 0
     in_rows, out_rows = [], []
     in_idx, out_idx = 1, 1
@@ -156,8 +193,13 @@ def render_a4_spec_card(item_code):
         t_type = str(t.get("trans_type", "")).strip().upper()
         qty = safe_int_clean(t.get("quantity"), 0)
         price = safe_float(t.get("unit_price"), base_price)
-        t_date = clean_date(t.get("trans_date", ""))
-        t_year = get_year_from_date(t_date)
+        t_date_str = clean_date(t.get("trans_date", ""))
+        t_dt_parsed = parse_standard_date(t_date_str)
+
+        # 기간 필터 적용 (기간 내에 포함되는 내역만 행 리스트에 추가)
+        in_range = (filter_start_dt <= t_dt_parsed <= filter_end_dt)
+
+        t_year = t_dt_parsed.year
         t_rate = get_exchange_rate_by_year(curr, t_year)
         t_krw_unit = price * t_rate
         total_row_amt = round(qty * t_krw_unit)
@@ -179,7 +221,7 @@ def render_a4_spec_card(item_code):
 
         row_dict = {
             "No": in_idx if t_type in ["IN", "입고"] else out_idx,
-            "일자": t_date,
+            "일자": t_date_str,
             "구분": "입고 (IN)" if t_type in ["IN", "입고"] else "출고 (OUT)",
             "수량": f"{qty:,} 개",
             "원화환산액": f"{round(t_krw_unit):,} 원",
@@ -190,15 +232,17 @@ def render_a4_spec_card(item_code):
         }
 
         if t_type in ["IN", "입고"]:
-            in_rows.append(row_dict)
-            total_in_qty += qty
-            total_in_amt += total_row_amt
+            if in_range:
+                in_rows.append(row_dict)
+                total_in_qty += qty
+                total_in_amt += total_row_amt
             calc_stock += qty
             in_idx += 1
         elif t_type in ["OUT", "출고"]:
-            out_rows.append(row_dict)
-            total_out_qty += qty
-            total_out_amt += total_row_amt
+            if in_range:
+                out_rows.append(row_dict)
+                total_out_qty += qty
+                total_out_amt += total_row_amt
             calc_stock -= qty
             out_idx += 1
 
@@ -218,13 +262,12 @@ def render_a4_spec_card(item_code):
     .info-table th { background-color: #f4f4f4; font-weight: bold; width: 18%; }
     .trans-table th { background-color: #f8f9fa; font-weight: bold; }
     .stock-calc-banner { background-color: #E3F2FD; border: 2px solid #2196F3; border-radius: 8px; padding: 15px; text-align: center; font-size: 16px; font-weight: bold; color: #0D47A1; margin: 20px 0; }
-    /* 웹상 10건 이상 스크롤 박스 스타일러스 */
     .table-scroll-container { max-height: 380px; overflow-y: auto; border: 1px solid #ccc; margin-bottom: 15px; }
     </style>
     """, unsafe_allow_html=True)
 
-    in_trs = "".join([f"<tr><td>{r['No']}</td><td>{r['일자']}</td><td>{r['구분']}</td><td>{r['수량']}</td><td>{r['원화환산액']}</td><td>{r['총금액']}</td><td>{r['담당자']}</td><td>{r['요청자']}</td><td>{r['비고']}</td></tr>" for r in in_rows]) if in_rows else "<tr><td colspan='9'>※ 입고 내역이 없습니다.</td></tr>"
-    out_trs = "".join([f"<tr><td>{r['No']}</td><td>{r['일자']}</td><td>{r['구분']}</td><td>{r['수량']}</td><td>{r['원화환산액']}</td><td>{r['총금액']}</td><td>{r['담당자']}</td><td>{r['요청자']}</td><td>{r['비고']}</td></tr>" for r in out_rows]) if out_rows else "<tr><td colspan='9'>※ 출고 내역이 없습니다.</td></tr>"
+    in_trs = "".join([f"<tr><td>{r['No']}</td><td>{r['일자']}</td><td>{r['구분']}</td><td>{r['수량']}</td><td>{r['원화환산액']}</td><td>{r['총금액']}</td><td>{r['담당자']}</td><td>{r['요청자']}</td><td>{r['비고']}</td></tr>" for r in in_rows]) if in_rows else "<tr><td colspan='9'>※ 선택한 기간 내 입고 내역이 없습니다.</td></tr>"
+    out_trs = "".join([f"<tr><td>{r['No']}</td><td>{r['일자']}</td><td>{r['구분']}</td><td>{r['수량']}</td><td>{r['원화환산액']}</td><td>{r['총금액']}</td><td>{r['담당자']}</td><td>{r['요청자']}</td><td>{r['비고']}</td></tr>" for r in out_rows]) if out_rows else "<tr><td colspan='9'>※ 선택한 기간 내 출고 내역이 없습니다.</td></tr>"
     photo_url = item.get("photo_url")
     img_html = f"<img src='{photo_url}' style='max-width:100%; max-height:200px; border-radius:6px;'/>" if photo_url else "<div style='background:#eef5ff; padding:40px 10px; text-align:center; color:#1976d2; font-weight:bold; border-radius:6px;'>등록된 사진 없음</div>"
 
@@ -249,7 +292,6 @@ def render_a4_spec_card(item_code):
                     .col-container {{ display: flex; gap: 20px; align-items: flex-start; }}
                     .col-img {{ flex: 1; text-align: center; }}
                     .col-info {{ flex: 3; }}
-                    /* 출력 시 스크롤 컨테이너 해제하여 전체 내용이 출력되도록 설정 */
                     .table-scroll-container {{ max-height: none !important; overflow-y: visible !important; border: none !important; }}
                     @media print {{
                         body {{ padding: 0; }}
@@ -262,7 +304,7 @@ def render_a4_spec_card(item_code):
                 <div class="a4-card">
                     <div class="a4-header">
                         <h2>자재품목명세서</h2>
-                        <p>발행일자: {datetime.date.today()}</p>
+                        <p>발행일자: {datetime.date.today()} &nbsp;|&nbsp; ({period_badge_text})</p>
                     </div>
                     <div class="col-container">
                         <div class="col-img">{img_html}</div>
@@ -280,11 +322,11 @@ def render_a4_spec_card(item_code):
                     </div>
                     <hr style="margin: 20px 0; border: 0; border-top: 1px solid #ccc;"/>
                     <div class="stock-calc-banner">
-                        📦 [재고금액 산출] : {total_in_amt:,} 원 (입고 총금액) - {total_out_amt:,} 원 (출고 총금액) = <span style="color: #D32F2F;">{net_stock_valuation:,} 원</span>
+                        📦 [재고금액 산출] : {total_in_amt:,} 원 (기간 내 입고 총금액) - {total_out_amt:,} 원 (기간 내 출고 총금액) = <span style="color: #D32F2F;">{net_stock_valuation:,} 원</span>
                     </div>
                     <hr style="margin: 20px 0; border: 0; border-top: 1px solid #ccc;"/>
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
-                        <h3 style="margin: 0; font-size: 18px;">📥 1. 입고 내역</h3>
+                        <h3 style="margin: 0; font-size: 18px;">📥 1. 입고 내역 ({period_badge_text})</h3>
                         <span style="font-weight: bold; color: #1B5E20; font-size: 14px;">합계 수량: {total_in_qty:,} 개 &nbsp;|&nbsp; 총 금액: {total_in_amt:,} 원</span>
                     </div>
                     <div class="table-scroll-container">
@@ -299,7 +341,7 @@ def render_a4_spec_card(item_code):
                     </div>
                     <hr style="margin: 20px 0; border: 0; border-top: 1px solid #ccc;"/>
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
-                        <h3 style="margin: 0; font-size: 18px;">📤 2. 출고 내역</h3>
+                        <h3 style="margin: 0; font-size: 18px;">📤 2. 출고 내역 ({period_badge_text})</h3>
                         <span style="font-weight: bold; color: #B71C1C; font-size: 14px;">합계 수량: {total_out_qty:,} 개 &nbsp;|&nbsp; 총 금액: {total_out_amt:,} 원</span>
                     </div>
                     <div class="table-scroll-container">
@@ -333,7 +375,7 @@ def render_a4_spec_card(item_code):
 
     with st.container():
         st.markdown("<div class='a4-card'>", unsafe_allow_html=True)
-        st.markdown(f"<div class='a4-header'><h2>자재품목명세서</h2><p>발행일자: {datetime.date.today()}</p></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='a4-header'><h2>자재품목명세서</h2><p>발행일자: {datetime.date.today()} &nbsp;|&nbsp; <span style='color: #d81b60; font-weight: bold;'>({period_badge_text})</span></p></div>", unsafe_allow_html=True)
         col_img, col_info = st.columns([1, 3])
 
         with col_img:
@@ -360,7 +402,7 @@ def render_a4_spec_card(item_code):
 
         st.markdown(f"""
         <div class="stock-calc-banner">
-            📦 [재고금액 산출] : {total_in_amt:,} 원 (입고 총금액) - {total_out_amt:,} 원 (출고 총금액) = <span style="color: #D32F2F;">{net_stock_valuation:,} 원</span>
+            📦 [재고금액 산출] : {total_in_amt:,} 원 (기간 내 입고 총금액) - {total_out_amt:,} 원 (기간 내 출고 총금액) = <span style="color: #D32F2F;">{net_stock_valuation:,} 원</span>
         </div>
         """, unsafe_allow_html=True)
 
@@ -368,7 +410,7 @@ def render_a4_spec_card(item_code):
         
         st.markdown(f"""
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
-            <h3 style="margin: 0; font-size: 18px;">📥 1. 입고 내역</h3>
+            <h3 style="margin: 0; font-size: 18px;">📥 1. 입고 내역 <span style="font-size: 14px; color: #33691e; font-weight: bold;">({period_badge_text})</span></h3>
             <span style="font-weight: bold; color: #1B5E20; font-size: 14px;">합계 수량: {total_in_qty:,} 개 &nbsp;|&nbsp; 총 금액: {total_in_amt:,} 원</span>
         </div>
         """, unsafe_allow_html=True)
@@ -380,13 +422,13 @@ def render_a4_spec_card(item_code):
             in_table_html += "</tbody></table></div>"
             st.markdown(in_table_html, unsafe_allow_html=True)
         else:
-            st.caption("※ 입고 내역이 없습니다.")
+            st.caption("※ 선택한 기간 내 입고 내역이 없습니다.")
 
         st.markdown("---")
 
         st.markdown(f"""
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
-            <h3 style="margin: 0; font-size: 18px;">📤 2. 출고 내역</h3>
+            <h3 style="margin: 0; font-size: 18px;">📤 2. 출고 내역 <span style="font-size: 14px; color: #33691e; font-weight: bold;">({period_badge_text})</span></h3>
             <span style="font-weight: bold; color: #B71C1C; font-size: 14px;">합계 수량: {total_out_qty:,} 개 &nbsp;|&nbsp; 총 금액: {total_out_amt:,} 원</span>
         </div>
         """, unsafe_allow_html=True)
@@ -398,7 +440,7 @@ def render_a4_spec_card(item_code):
             out_table_html += "</tbody></table></div>"
             st.markdown(out_table_html, unsafe_allow_html=True)
         else:
-            st.caption("※ 출고 내역이 없습니다.")
+            st.caption("※ 선택한 기간 내 출고 내역이 없습니다.")
 
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1836,7 +1878,7 @@ elif menu == "👥 사용자 관리 (관리자)":
 
                 if sub_u_delete:
                     if target_user.get("emp_no") == user["emp_no"]:
-                        st.error("❌ 현재 로그인 중인 본인 계정은 삭제할 수 없습니다.")
+                        st.error("❌ 현재 로그인 중인 본인 계정은 배정된 본인 계정은 삭제할 수 없습니다.")
                     else:
                         db.supabase.table("users").delete().eq("emp_no", target_user.get("emp_no")).execute()
                         st.success("✅ 사용자 계정이 삭제되었습니다!")
