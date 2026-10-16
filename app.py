@@ -218,6 +218,8 @@ def render_a4_spec_card(item_code):
     .info-table th { background-color: #f4f4f4; font-weight: bold; width: 18%; }
     .trans-table th { background-color: #f8f9fa; font-weight: bold; }
     .stock-calc-banner { background-color: #E3F2FD; border: 2px solid #2196F3; border-radius: 8px; padding: 15px; text-align: center; font-size: 16px; font-weight: bold; color: #0D47A1; margin: 20px 0; }
+    /* 웹상 10건 이상 스크롤 박스 스타일러스 */
+    .table-scroll-container { max-height: 380px; overflow-y: auto; border: 1px solid #ccc; margin-bottom: 15px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -247,9 +249,12 @@ def render_a4_spec_card(item_code):
                     .col-container {{ display: flex; gap: 20px; align-items: flex-start; }}
                     .col-img {{ flex: 1; text-align: center; }}
                     .col-info {{ flex: 3; }}
+                    /* 출력 시 스크롤 컨테이너 해제하여 전체 내용이 출력되도록 설정 */
+                    .table-scroll-container {{ max-height: none !important; overflow-y: visible !important; border: none !important; }}
                     @media print {{
                         body {{ padding: 0; }}
                         .a4-card {{ border: none; padding: 0; }}
+                        .table-scroll-container {{ max-height: none !important; overflow-y: visible !important; border: none !important; }}
                     }}
                 </style>
             </head>
@@ -282,27 +287,31 @@ def render_a4_spec_card(item_code):
                         <h3 style="margin: 0; font-size: 18px;">📥 1. 입고 내역</h3>
                         <span style="font-weight: bold; color: #1B5E20; font-size: 14px;">합계 수량: {total_in_qty:,} 개 &nbsp;|&nbsp; 총 금액: {total_in_amt:,} 원</span>
                     </div>
-                    <table class="trans-table">
-                        <thead>
-                            <tr style="background-color: #f8f9fa;">
-                                <th>No</th><th>일자</th><th>구분</th><th>수량</th><th>원화환산액</th><th>총금액</th><th>담당자</th><th>요청자</th><th>비고</th>
-                            </tr>
-                        </thead>
-                        <tbody>{in_trs}</tbody>
-                    </table>
+                    <div class="table-scroll-container">
+                        <table class="trans-table">
+                            <thead>
+                                <tr style="background-color: #f8f9fa;">
+                                    <th>No</th><th>일자</th><th>구분</th><th>수량</th><th>원화환산액</th><th>총금액</th><th>담당자</th><th>요청자</th><th>비고</th>
+                                </tr>
+                            </thead>
+                            <tbody>{in_trs}</tbody>
+                        </table>
+                    </div>
                     <hr style="margin: 20px 0; border: 0; border-top: 1px solid #ccc;"/>
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
                         <h3 style="margin: 0; font-size: 18px;">📤 2. 출고 내역</h3>
                         <span style="font-weight: bold; color: #B71C1C; font-size: 14px;">합계 수량: {total_out_qty:,} 개 &nbsp;|&nbsp; 총 금액: {total_out_amt:,} 원</span>
                     </div>
-                    <table class="trans-table">
-                        <thead>
-                            <tr style="background-color: #f8f9fa;">
-                                <th>No</th><th>일자</th><th>구분</th><th>수량</th><th>원화환산액</th><th>총금액</th><th>담당자</th><th>요청자</th><th>비고</th>
-                            </tr>
-                        </thead>
-                        <tbody>{out_trs}</tbody>
-                    </table>
+                    <div class="table-scroll-container">
+                        <table class="trans-table">
+                            <thead>
+                                <tr style="background-color: #f8f9fa;">
+                                    <th>No</th><th>일자</th><th>구분</th><th>수량</th><th>원화환산액</th><th>총금액</th><th>담당자</th><th>요청자</th><th>비고</th>
+                                </tr>
+                            </thead>
+                            <tbody>{out_trs}</tbody>
+                        </table>
+                    </div>
                 </div>
             </body>
             </html>
@@ -365,10 +374,10 @@ def render_a4_spec_card(item_code):
         """, unsafe_allow_html=True)
 
         if in_rows:
-            in_table_html = "<table class='trans-table'><thead><tr style='background-color: #f8f9fa;'><th>No</th><th>일자</th><th>구분</th><th>수량</th><th>원화환산액</th><th>총금액</th><th>담당자</th><th>요청자</th><th>비고</th></tr></thead><tbody>"
+            in_table_html = "<div class='table-scroll-container'><table class='trans-table'><thead><tr style='background-color: #f8f9fa;'><th>No</th><th>일자</th><th>구분</th><th>수량</th><th>원화환산액</th><th>총금액</th><th>담당자</th><th>요청자</th><th>비고</th></tr></thead><tbody>"
             for r in in_rows:
                 in_table_html += f"<tr><td>{r['No']}</td><td>{r['일자']}</td><td>{r['구분']}</td><td>{r['수량']}</td><td>{r['원화환산액']}</td><td>{r['총금액']}</td><td>{r['담당자']}</td><td>{r['요청자']}</td><td>{r['비고']}</td></tr>"
-            in_table_html += "</tbody></table>"
+            in_table_html += "</tbody></table></div>"
             st.markdown(in_table_html, unsafe_allow_html=True)
         else:
             st.caption("※ 입고 내역이 없습니다.")
@@ -383,10 +392,10 @@ def render_a4_spec_card(item_code):
         """, unsafe_allow_html=True)
 
         if out_rows:
-            out_table_html = "<table class='trans-table'><thead><tr style='background-color: #f8f9fa;'><th>No</th><th>일자</th><th>구분</th><th>수량</th><th>원화환산액</th><th>총금액</th><th>담당자</th><th>요청자</th><th>비고</th></tr></thead><tbody>"
+            out_table_html = "<div class='table-scroll-container'><table class='trans-table'><thead><tr style='background-color: #f8f9fa;'><th>No</th><th>일자</th><th>구분</th><th>수량</th><th>원화환산액</th><th>총금액</th><th>담당자</th><th>요청자</th><th>비고</th></tr></thead><tbody>"
             for r in out_rows:
                 out_table_html += f"<tr><td>{r['No']}</td><td>{r['일자']}</td><td>{r['구분']}</td><td>{r['수량']}</td><td>{r['원화환산액']}</td><td>{r['총금액']}</td><td>{r['담당자']}</td><td>{r['요청자']}</td><td>{r['비고']}</td></tr>"
-            out_table_html += "</tbody></table>"
+            out_table_html += "</tbody></table></div>"
             st.markdown(out_table_html, unsafe_allow_html=True)
         else:
             st.caption("※ 출고 내역이 없습니다.")
@@ -445,7 +454,6 @@ MENU_ITEMS = "🏷️ 품목 관리"
 MENU_HISTORY = "🔍 입출고 내역 조회"
 MENU_RATES = "⚙️ 환율 설정"
 
-# 권한에 따른 메뉴 목록 구성 (게스트는 재고 현황판, 입출고 내역 조회만 허용)
 is_guest = (user.get("position") == "게스트" or user.get("is_admin") == 2)
 
 if is_guest:
@@ -1759,9 +1767,8 @@ elif menu == "👥 사용자 관리 (관리자)":
 
             col3, col4, col5 = st.columns(3)
             new_pw = col3.text_input("비밀번호 (PW) *필수", type="password")
-            new_pos = col4.selectbox("직급", POSITIONS, index=7) # 기본값 게스트 또는 적절히 선택 가능
+            new_pos = col4.selectbox("직급", POSITIONS, index=7)
             
-            # 권한 설정: 일반 사용자(0), 관리자(1), 게스트(2)
             role_options = {0: "일반 사용자", 1: "관리자 (Admin)", 2: "게스트 (Guest)"}
             new_is_admin = col5.selectbox("권한 설정", [0, 1, 2], format_func=lambda x: role_options[x], index=2)
 
