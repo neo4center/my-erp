@@ -195,9 +195,16 @@ def render_a4_spec_card(item_code):
 
         in_range = (filter_start_dt <= t_dt_parsed <= filter_end_dt)
 
-        t_year = t_dt_parsed.year
-        t_rate = get_exchange_rate_by_year(curr, t_year)
-        t_krw_unit = price * t_rate
+        # 출고시에도 입고시점 단가/환율 기준으로 금액 계산
+        if t_type in ["OUT", "출고"]:
+            t_year = representative_year
+            t_rate = representative_rate
+            t_krw_unit = representative_price * representative_rate
+        else:
+            t_year = t_dt_parsed.year
+            t_rate = get_exchange_rate_by_year(curr, t_year)
+            t_krw_unit = price * t_rate
+
         total_row_amt = round(qty * t_krw_unit)
         
         raw_mgr = safe_str_clean(t.get("manager"), "")
@@ -1576,6 +1583,11 @@ elif menu == MENU_HISTORY:
                     calc_sub_out_amt = 0
                     sheet_export_rows = []
 
+                    latest_price = item_latest_price_map.get(target_icode, info.get("unit_price", 0.0))
+                    latest_date = item_latest_date_map.get(target_icode, info.get("in_date", str(datetime.date.today())))
+                    in_year = get_year_from_date(latest_date)
+                    in_rate = get_exchange_rate_by_year(info.get("currency", "KRW"), in_year)
+
                     for idx, t in enumerate(sorted_details, 1):
                         icode = str(t.get("item_code", "-")).strip()
                         t_info = item_info_map.get(icode.upper(), {"name": "-", "currency": "KRW"})
@@ -1586,9 +1598,14 @@ elif menu == MENU_HISTORY:
                         t_date = clean_date(t.get("trans_date", ""))
                         t_type = str(t.get("trans_type", "")).strip().upper()
                         
-                        year = get_year_from_date(t_date)
-                        rate = get_exchange_rate_by_year(curr, year)
-                        unit_krw = round(price * rate)
+                        # 출고 단가/환율 역시 입고시점 단가/환율 적용
+                        if t_type in ["OUT", "출고"]:
+                            unit_krw = round(latest_price * in_rate)
+                        else:
+                            year = get_year_from_date(t_date)
+                            rate = get_exchange_rate_by_year(curr, year)
+                            unit_krw = round(price * rate)
+
                         total_krw = round(qty * unit_krw)
                         
                         if t_type in ["OUT", "출고"]:
