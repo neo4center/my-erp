@@ -195,7 +195,6 @@ def render_a4_spec_card(item_code):
 
         in_range = (filter_start_dt <= t_dt_parsed <= filter_end_dt)
 
-        # 출고시에도 입고시점 단가/환율 기준으로 금액 계산
         if t_type in ["OUT", "출고"]:
             t_year = representative_year
             t_rate = representative_rate
@@ -1208,6 +1207,17 @@ elif menu == MENU_ITEMS:
             t = edit_opts[sel_edit]
             target_icode = t["item_code"]
 
+            # 해당 품목의 기존 초기재고(stock_lots 및 stock_transactions) 조회
+            current_initial_qty = 0
+            lot_id_to_update = None
+            try:
+                lot_resp = db.supabase.table("stock_lots").select("*").eq("item_code", target_icode).order("lot_id", desc=False).limit(1).execute()
+                if lot_resp.data:
+                    current_initial_qty = safe_int_clean(lot_resp.data[0].get("quantity"), 0)
+                    lot_id_to_update = lot_resp.data[0].get("lot_id")
+            except Exception:
+                pass
+
             existing_photo = t.get("photo_url")
             if existing_photo:
                 st.image(existing_photo, width=150, caption="현재 등록된 사진")
@@ -1232,11 +1242,13 @@ elif menu == MENU_ITEMS:
                 curr_list = ["KRW", "USD", "EUR", "JPY"]
                 e_curr = col9.selectbox("화폐", curr_list, index=curr_list.index(t.get("currency", "KRW")) if t.get("currency") in curr_list else 0)
 
-                e_remark = st.text_input("비고", value=safe_str_clean(t.get("remark")))
+                col10, col11 = st.columns(2)
+                e_initial_qty = col10.number_input("초기 재고 수량 (수정 가능)", min_value=0, value=current_initial_qty, step=1, format="%d")
+                e_remark = col11.text_input("비고", value=safe_str_clean(t.get("remark")))
                 
                 edit_img_file = st.file_uploader("품목 사진 수정/교체 (새 사진 첨부 시 기존 사진 덮어쓰기)", type=["png", "jpg", "jpeg"], key="edit_img_file")
 
-                if st.form_submit_button("품목 정보 수정 완료"):
+                if st.form_submit_button("품목 정보 및 초기 수량 수정 완료"):
                     new_photo_url = db.upload_item_image(edit_img_file, target_icode) if edit_img_file else t.get("photo_url")
 
                     update_payload = {
@@ -1254,8 +1266,49 @@ elif menu == MENU_ITEMS:
                     if new_photo_url:
                         update_payload["photo_url"] = new_photo_url
 
+                    # 1. items 테이블 정보 업데이트
                     db.supabase.table("items").update(update_payload).eq("item_code", target_icode).execute()
-                    st.success("✅ 품목 정보 및 사진이 성공적으로 수정되었습니다!")
+
+                    # 2. stock_lots 테이블 초기재고 수량 업데이트 (존재하는 경우)
+                    if lot_id_to_update is not None:
+                        db.supabase.table("stock_lots").update({"quantity": int(e_initial_qty)}).eq("lot_id", lot_id_to_update).execute()
+                    else:
+                        # 로트가 없으면 새로 생성
+                        if e_initial_qty > 0:
+                            db.register_inbound_lot(
+                                item_code=target_icode,
+                                item_name=safe_str_clean(e_name),
+                                category=safe_str_clean(e_type, "일반"),
+                                inbound_date=clean_date(t.get("in_date")),
+                                unit_price=float(e_price),
+                                quantity=int(e_initial_qty),
+                                manager=f"{user['name']}",
+                                requester="-",
+                                remark=safe_str_clean(e_remark, "기초재고수정생성")
+                            )
+
+                    # 3. stock_transactions 테이블 초기재고(초기등록) 트랜잭션 수량 동기화
+                    try:
+                        trans_resp = db.supabase.table("stock_transactions").select("*").eq("item_code", target_icode).eq("trans_type", "IN").order("id", desc=False).limit(1).execute()
+                        if trans_resp.data:
+                            first_trans_id = trans_resp.data[0].get("id")
+                            db.supabase.table("stock_transactions").update({"quantity": int(e_initial_qty), "unit_price": float(e_price)}).eq("id", first_trans_id).execute()
+                        else:
+                            if e_initial_qty > 0:
+                                db.supabase.table("stock_transactions").insert({
+                                    "item_code": target_icode,
+                                    "trans_type": "IN",
+                                    "quantity": int(e_initial_qty),
+                                    "unit_price": float(e_price),
+                                    "trans_date": clean_date(t.get("in_date")),
+                                    "requester": "-",
+                                    "manager": f"{user['name']}",
+                                    "remark": "기초재고 일괄등록"
+                                }).execute()
+                    except Exception:
+                        pass
+
+                    st.success("✅ 품목 정보, 사진 및 초기 재고 수량이 성공적으로 수정되었습니다!")
                     st.rerun()
 
     with tab3:
@@ -1598,7 +1651,6 @@ elif menu == MENU_HISTORY:
                         t_date = clean_date(t.get("trans_date", ""))
                         t_type = str(t.get("trans_type", "")).strip().upper()
                         
-                        # 출고 단가/환율 역시 입고시점 단가/환율 적용
                         if t_type in ["OUT", "출고"]:
                             unit_krw = round(latest_price * in_rate)
                         else:
