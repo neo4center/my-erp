@@ -1207,14 +1207,12 @@ elif menu == MENU_ITEMS:
             t = edit_opts[sel_edit]
             target_icode = t["item_code"]
 
-            # 해당 품목의 기존 초기재고(stock_lots 및 stock_transactions) 조회
+            # 해당 품목의 기존 초기재고(stock_lots) 수량 조회
             current_initial_qty = 0
-            lot_id_to_update = None
             try:
-                lot_resp = db.supabase.table("stock_lots").select("*").eq("item_code", target_icode).order("lot_id", desc=False).limit(1).execute()
+                lot_resp = db.supabase.table("stock_lots").select("quantity").eq("item_code", target_icode).order("lot_id", desc=False).limit(1).execute()
                 if lot_resp.data:
                     current_initial_qty = safe_int_clean(lot_resp.data[0].get("quantity"), 0)
-                    lot_id_to_update = lot_resp.data[0].get("lot_id")
             except Exception:
                 pass
 
@@ -1269,27 +1267,31 @@ elif menu == MENU_ITEMS:
                     # 1. items 테이블 정보 업데이트
                     db.supabase.table("items").update(update_payload).eq("item_code", target_icode).execute()
 
-                    # 2. stock_lots 테이블 초기재고 수량 업데이트 (존재하는 경우)
-                    if lot_id_to_update is not None:
-                        db.supabase.table("stock_lots").update({"quantity": int(e_initial_qty)}).eq("lot_id", lot_id_to_update).execute()
-                    else:
-                        # 로트가 없으면 새로 생성
-                        if e_initial_qty > 0:
-                            db.register_inbound_lot(
-                                item_code=target_icode,
-                                item_name=safe_str_clean(e_name),
-                                category=safe_str_clean(e_type, "일반"),
-                                inbound_date=clean_date(t.get("in_date")),
-                                unit_price=float(e_price),
-                                quantity=int(e_initial_qty),
-                                manager=f"{user['name']}",
-                                requester="-",
-                                remark=safe_str_clean(e_remark, "기초재고수정생성")
-                            )
-
-                    # 3. stock_transactions 테이블 초기재고(초기등록) 트랜잭션 수량 동기화
+                    # 2. stock_lots 테이블 초기재고 수량 업데이트 또는 생성
                     try:
-                        trans_resp = db.supabase.table("stock_transactions").select("*").eq("item_code", target_icode).eq("trans_type", "IN").order("id", desc=False).limit(1).execute()
+                        lot_check = db.supabase.table("stock_lots").select("lot_id").eq("item_code", target_icode).order("lot_id", desc=False).limit(1).execute()
+                        if lot_check.data:
+                            l_id = lot_check.data[0].get("lot_id")
+                            db.supabase.table("stock_lots").update({"quantity": int(e_initial_qty), "unit_price": float(e_price)}).eq("lot_id", l_id).execute()
+                        else:
+                            if e_initial_qty > 0:
+                                db.register_inbound_lot(
+                                    item_code=target_icode,
+                                    item_name=safe_str_clean(e_name),
+                                    category=safe_str_clean(e_type, "일반"),
+                                    inbound_date=clean_date(t.get("in_date")),
+                                    unit_price=float(e_price),
+                                    quantity=int(e_initial_qty),
+                                    manager=f"{user['name']}",
+                                    requester="-",
+                                    remark=safe_str_clean(e_remark, "기초재고수정생성")
+                                )
+                    except Exception as ex:
+                        st.warning(f"stock_lots 업데이트 경고: {ex}")
+
+                    # 3. stock_transactions 테이블 초기재고 트랜잭션 동기화 (IN, 입고 모두 대응)
+                    try:
+                        trans_resp = db.supabase.table("stock_transactions").select("id").eq("item_code", target_icode).in_("trans_type", ["IN", "입고"]).order("id", desc=False).limit(1).execute()
                         if trans_resp.data:
                             first_trans_id = trans_resp.data[0].get("id")
                             db.supabase.table("stock_transactions").update({"quantity": int(e_initial_qty), "unit_price": float(e_price)}).eq("id", first_trans_id).execute()
@@ -1305,8 +1307,8 @@ elif menu == MENU_ITEMS:
                                     "manager": f"{user['name']}",
                                     "remark": "기초재고 일괄등록"
                                 }).execute()
-                    except Exception:
-                        pass
+                    except Exception as ex:
+                        st.warning(f"stock_transactions 업데이트 경고: {ex}")
 
                     st.success("✅ 품목 정보, 사진 및 초기 재고 수량이 성공적으로 수정되었습니다!")
                     st.rerun()
