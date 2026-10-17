@@ -186,61 +186,115 @@ def render_a4_spec_card(item_code):
     representative_year = latest_dt_obj.year
     representative_rate = get_exchange_rate_by_year(curr, representative_year)
 
+    # 선입선출(FIFO) 시뮬레이션용 active_lots
+    active_lots = []
+
     for t in trans_data:
         t_type = str(t.get("trans_type", "")).strip().upper()
         qty = safe_int_clean(t.get("quantity"), 0)
         price = safe_float(t.get("unit_price"), base_price)
         t_date_str = clean_date(t.get("trans_date", ""))
         t_dt_parsed = parse_standard_date(t_date_str)
+        t_year = t_dt_parsed.year
+        t_rate = get_exchange_rate_by_year(curr, t_year)
 
         in_range = (filter_start_dt <= t_dt_parsed <= filter_end_dt)
 
-        if t_type in ["OUT", "출고"]:
-            t_year = representative_year
-            t_rate = representative_rate
-            t_krw_unit = representative_price * representative_rate
-        else:
-            t_year = t_dt_parsed.year
-            t_rate = get_exchange_rate_by_year(curr, t_year)
-            t_krw_unit = price * t_rate
-
-        total_row_amt = round(qty * t_krw_unit)
-        
-        raw_mgr = safe_str_clean(t.get("manager"), "")
-        if not raw_mgr or raw_mgr in ["-", "None", ""]:
-            raw_mgr = "최광호"
-        else:
-            for pos in POSITIONS:
-                raw_mgr = raw_mgr.replace(pos, "").strip()
-        
-        raw_req = safe_str_clean(t.get("requester"), "-")
-        if raw_req in ["-", "초기재고일괄등록", "시스템입고", "None", ""]:
-            raw_req = "-" if t_type in ["IN", "입고"] else "출고담당자"
-
-        t_remark = safe_str_clean(t.get("remark"), "")
-        if not t_remark or t_remark in ["-", "None", ""]:
-            t_remark = safe_str_clean(item.get("remark"), "-")
-
-        row_dict = {
-            "No": in_idx if t_type in ["IN", "입고"] else out_idx,
-            "일자": t_date_str,
-            "구분": "입고 (IN)" if t_type in ["IN", "입고"] else "출고 (OUT)",
-            "수량": f"{qty:,} 개",
-            "원화환산액": f"{round(t_krw_unit):,} 원",
-            "총금액": f"{total_row_amt:,} 원",
-            "담당자": raw_mgr,
-            "요청자": raw_req,
-            "비고": t_remark
-        }
-
         if t_type in ["IN", "입고"]:
+            active_lots.append({"qty": qty, "price": price, "rate": t_rate, "year": t_year})
+            t_krw_unit = price * t_rate
+            total_row_amt = round(qty * t_krw_unit)
+            
+            raw_mgr = safe_str_clean(t.get("manager"), "")
+            if not raw_mgr or raw_mgr in ["-", "None", ""]:
+                raw_mgr = "최광호"
+            else:
+                for pos in POSITIONS:
+                    raw_mgr = raw_mgr.replace(pos, "").strip()
+            
+            raw_req = safe_str_clean(t.get("requester"), "-")
+            if raw_req in ["-", "초기재고일괄등록", "시스템입고", "None", ""]:
+                raw_req = "-"
+
+            t_remark = safe_str_clean(t.get("remark"), "")
+            if not t_remark or t_remark in ["-", "None", ""]:
+                t_remark = safe_str_clean(item.get("remark"), "-")
+
+            row_dict = {
+                "No": in_idx,
+                "일자": t_date_str,
+                "구분": "입고 (IN)",
+                "수량": f"{qty:,} 개",
+                "원화환산액": f"{round(t_krw_unit):,} 원",
+                "총금액": f"{total_row_amt:,} 원",
+                "담당자": raw_mgr,
+                "요청자": raw_req,
+                "비고": t_remark
+            }
+
             if in_range:
                 in_rows.append(row_dict)
                 total_in_qty += qty
                 total_in_amt += total_row_amt
             calc_stock += qty
             in_idx += 1
+
         elif t_type in ["OUT", "출고"]:
+            # 선입선출(FIFO) 방식으로 소진될 입고 로트 매칭
+            remaining_out = qty
+            consumed_lots_info = []
+            
+            while remaining_out > 0 and active_lots:
+                lot = active_lots[0]
+                if lot["qty"] <= remaining_out:
+                    consumed_qty = lot["qty"]
+                    remaining_out -= consumed_qty
+                    active_lots.pop(0)
+                    consumed_lots_info.append((consumed_qty, lot["price"], lot["rate"]))
+                else:
+                    consumed_qty = remaining_out
+                    lot["qty"] -= consumed_qty
+                    remaining_out = 0
+                    consumed_lots_info.append((consumed_qty, lot["price"], lot["rate"]))
+            
+            if remaining_out > 0:
+                consumed_lots_info.append((remaining_out, representative_price, representative_rate))
+            
+            total_consumed_qty = sum(q for q, p, r in consumed_lots_info)
+            if total_consumed_qty > 0:
+                t_krw_unit = sum(q * p * r for q, p, r in consumed_lots_info) / total_consumed_qty
+            else:
+                t_krw_unit = representative_price * representative_rate
+
+            total_row_amt = round(qty * t_krw_unit)
+
+            raw_mgr = safe_str_clean(t.get("manager"), "")
+            if not raw_mgr or raw_mgr in ["-", "None", ""]:
+                raw_mgr = "최광호"
+            else:
+                for pos in POSITIONS:
+                    raw_mgr = raw_mgr.replace(pos, "").strip()
+            
+            raw_req = safe_str_clean(t.get("requester"), "-")
+            if raw_req in ["-", "초기재고일괄등록", "시스템입고", "None", ""]:
+                raw_req = "출고담당자"
+
+            t_remark = safe_str_clean(t.get("remark"), "")
+            if not t_remark or t_remark in ["-", "None", ""]:
+                t_remark = safe_str_clean(item.get("remark"), "-")
+
+            row_dict = {
+                "No": out_idx,
+                "일자": t_date_str,
+                "구분": "출고 (OUT)",
+                "수량": f"{qty:,} 개",
+                "원화환산액": f"{round(t_krw_unit):,} 원",
+                "총금액": f"{total_row_amt:,} 원",
+                "담당자": raw_mgr,
+                "요청자": raw_req,
+                "비고": t_remark
+            }
+
             if in_range:
                 out_rows.append(row_dict)
                 total_out_qty += qty
@@ -1267,7 +1321,7 @@ elif menu == MENU_ITEMS:
                     # 1. items 테이블 정보 업데이트
                     db.supabase.table("items").update(update_payload).eq("item_code", target_icode).execute()
 
-                    # 2. stock_transactions 테이블 초기재고 트랜잭션 동기화 (경고 원인인 stock_lots 업데이트 코드는 제외)
+                    # 2. stock_transactions 테이블 초기재고 트랜잭션 동기화
                     try:
                         trans_resp = db.supabase.table("stock_transactions").select("id").eq("item_code", target_icode).in_("trans_type", ["IN", "입고"]).order("id", desc=False).limit(1).execute()
                         if trans_resp.data:
@@ -1621,6 +1675,7 @@ elif menu == MENU_HISTORY:
                     in_year = get_year_from_date(latest_date)
                     in_rate = get_exchange_rate_by_year(info.get("currency", "KRW"), in_year)
 
+                    active_lots = []
                     for idx, t in enumerate(sorted_details, 1):
                         icode = str(t.get("item_code", "-")).strip()
                         t_info = item_info_map.get(icode.upper(), {"name": "-", "currency": "KRW"})
@@ -1629,13 +1684,38 @@ elif menu == MENU_HISTORY:
                         qty = safe_int_clean(t.get("quantity"), 0)
                         price = safe_float(t.get("unit_price"), 0.0)
                         t_date = clean_date(t.get("trans_date", ""))
+                        t_dt_parsed = parse_standard_date(t_date)
                         t_type = str(t.get("trans_type", "")).strip().upper()
-                        
-                        if t_type in ["OUT", "출고"]:
-                            unit_krw = round(latest_price * in_rate)
+                        year = t_dt_parsed.year
+                        rate = get_exchange_rate_by_year(curr, year)
+
+                        if t_type in ["IN", "입고"]:
+                            active_lots.append({"qty": qty, "price": price, "rate": rate})
+                            unit_krw = round(price * rate)
+                        elif t_type in ["OUT", "출고"]:
+                            remaining_out = qty
+                            consumed_lots_info = []
+                            while remaining_out > 0 and active_lots:
+                                lot = active_lots[0]
+                                if lot["qty"] <= remaining_out:
+                                    cq = lot["qty"]
+                                    remaining_out -= cq
+                                    active_lots.pop(0)
+                                    consumed_lots_info.append((cq, lot["price"], lot["rate"]))
+                                else:
+                                    cq = remaining_out
+                                    lot["qty"] -= cq
+                                    remaining_out = 0
+                                    consumed_lots_info.append((cq, lot["price"], lot["rate"]))
+                            if remaining_out > 0:
+                                consumed_lots_info.append((remaining_out, latest_price, in_rate))
+                            
+                            total_cq = sum(q for q, p, r in consumed_lots_info)
+                            if total_cq > 0:
+                                unit_krw = round(sum(q * p * r for q, p, r in consumed_lots_info) / total_cq)
+                            else:
+                                unit_krw = round(latest_price * in_rate)
                         else:
-                            year = get_year_from_date(t_date)
-                            rate = get_exchange_rate_by_year(curr, year)
                             unit_krw = round(price * rate)
 
                         total_krw = round(qty * unit_krw)
