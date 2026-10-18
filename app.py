@@ -186,7 +186,6 @@ def render_a4_spec_card(item_code):
     representative_year = latest_dt_obj.year
     representative_rate = get_exchange_rate_by_year(curr, representative_year)
 
-    # 선입선출(FIFO) 시뮬레이션용 active_lots
     active_lots = []
 
     for t in trans_data:
@@ -240,7 +239,6 @@ def render_a4_spec_card(item_code):
             in_idx += 1
 
         elif t_type in ["OUT", "출고"]:
-            # 선입선출(FIFO) 방식으로 소진될 입고 로트 매칭
             remaining_out = qty
             consumed_lots_info = []
             
@@ -1261,7 +1259,6 @@ elif menu == MENU_ITEMS:
             t = edit_opts[sel_edit]
             target_icode = t["item_code"]
 
-            # 해당 품목의 기존 초기재고 트랜잭션 수량 조회
             current_initial_qty = 0
             try:
                 trans_check = db.supabase.table("stock_transactions").select("quantity").eq("item_code", target_icode).in_("trans_type", ["IN", "입고"]).order("id", desc=False).limit(1).execute()
@@ -1318,10 +1315,8 @@ elif menu == MENU_ITEMS:
                     if new_photo_url:
                         update_payload["photo_url"] = new_photo_url
 
-                    # 1. items 테이블 정보 업데이트
                     db.supabase.table("items").update(update_payload).eq("item_code", target_icode).execute()
 
-                    # 2. stock_transactions 테이블 초기재고 트랜잭션 동기화
                     try:
                         trans_resp = db.supabase.table("stock_transactions").select("id").eq("item_code", target_icode).in_("trans_type", ["IN", "입고"]).order("id", desc=False).limit(1).execute()
                         if trans_resp.data:
@@ -1606,8 +1601,9 @@ elif menu == MENU_HISTORY:
 
         styled_df = df_summary_display.drop(columns=["현재재고_raw"]).style
 
+        # 정확히 "0 개" 문자열일 때만 빨간색 강조 스타일 적용
         def color_zero_stock(val):
-            if "0 개" in str(val):
+            if str(val).strip() == "0 개":
                 return 'color: #D32F2F; font-weight: bold;'
             return ''
 
