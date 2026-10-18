@@ -619,37 +619,40 @@ if menu == MENU_STOCK:
         chunk_size = 1000
         start = 0
         while True:
-            sub_query = db.supabase.table("items").select("*")
-            if search_kw.strip():
-                kw = search_kw.strip()
-                sub_query = sub_query.or_(f"item_code.ilike.%{kw}%,item_name.ilike.%{kw}%,item_detail_no.ilike.%{kw}%,model_spec.ilike.%{kw}%,remark.ilike.%{kw}%")
-            
-            resp = sub_query.order("item_code", desc=False).range(start, start + chunk_size - 1).execute()
+            resp = db.supabase.table("items").select("*").order("item_code", desc=False).range(start, start + chunk_size - 1).execute()
             chunk_data = resp.data or []
             all_items.extend(chunk_data)
-            
-            if search_kw.strip() or is_filtering:
-                if len(chunk_data) < chunk_size:
-                    break
-                start += chunk_size
-            else:
-                PAGE_SIZE_STOCK = 100
-                total_stock_pages = max(1, math.ceil(total_count / PAGE_SIZE_STOCK))
-                
-                col_p1, _, col_p_btn = st.columns([1, 2, 2])
-                with col_p1:
-                    current_stock_page = st.selectbox("📄 페이지 선택 (100건씩)", list(range(1, total_stock_pages + 1)), format_func=lambda x: f"{x} 페이지 (총 {total_stock_pages}페이지)")
-
-                start_idx = (current_stock_page - 1) * PAGE_SIZE_STOCK
-                end_idx = start_idx + PAGE_SIZE_STOCK - 1
-                
-                items_resp = db.supabase.table("items").select("*").order("item_code", desc=False).range(start_idx, end_idx).execute()
-                all_items = items_resp.data or []
+            if len(chunk_data) < chunk_size:
                 break
+            start += chunk_size
     except Exception:
         all_items = []
 
-    if search_kw.strip() or is_filtering:
+    if search_kw.strip():
+        kw = search_kw.strip().lower()
+        filtered_items = []
+        for item in all_items:
+            if (kw in str(item.get("item_code", "")).lower() or
+                kw in str(item.get("item_name", "")).lower() or
+                kw in str(item.get("item_detail_no", "")).lower() or
+                kw in str(item.get("model_spec", "")).lower() or
+                kw in str(item.get("remark", "")).lower() or
+                kw in str(item.get("device_name", "")).lower() or
+                kw in str(item.get("maker", "")).lower()):
+                filtered_items.append(item)
+        all_items = filtered_items
+    elif not is_filtering:
+        PAGE_SIZE_STOCK = 100
+        total_stock_pages = max(1, math.ceil(len(all_items) / PAGE_SIZE_STOCK))
+        
+        col_p1, _, col_p_btn = st.columns([1, 2, 2])
+        with col_p1:
+            current_stock_page = st.selectbox("📄 페이지 선택 (100건씩)", list(range(1, total_stock_pages + 1)), format_func=lambda x: f"{x} 페이지 (총 {total_stock_pages}페이지)")
+
+        start_idx = (current_stock_page - 1) * PAGE_SIZE_STOCK
+        end_idx = start_idx + PAGE_SIZE_STOCK
+        all_items = all_items[start_idx:end_idx]
+    else:
         col_p_btn = st.columns([1, 2, 2])[2]
 
     all_trans_resp = []
@@ -821,11 +824,14 @@ if menu == MENU_STOCK:
         with pd.ExcelWriter(out_excel, engine="openpyxl") as writer:
             df_all_excel.to_excel(writer, index=False, sheet_name="전체재고현황")
 
+        if search_kw.strip() or is_filtering:
+            col_p_btn = st.columns([1, 2, 2])[2]
+
         with col_p_btn:
             st.write("")
             st.download_button("📥 전체 품목 엑셀 다운로드 (.xlsx)", out_excel.getvalue(), file_name=f"ERP_전체재고현황_{datetime.date.today()}.xlsx")
 
-        st.markdown(f"<p style='color: #666; font-size: 13px; margin-top: -10px; margin-bottom: 15px;'>📌 현재 페이지(100건) 재고 자산 금액: <b>{current_page_asset_amt:,.0f} 원</b></p>", unsafe_allow_html=True)
+        st.markdown(f"<p style='color: #666; font-size: 13px; margin-top: -10px; margin-bottom: 15px;'>📌 현재 페이지(또는 검색결과) 재고 자산 금액: <b>{current_page_asset_amt:,.0f} 원</b></p>", unsafe_allow_html=True)
 
         col1, col2, _ = st.columns([2, 2, 2])
         col1.metric("전체 등록 품목 수", f"{total_count} 개")
@@ -882,37 +888,40 @@ elif menu == MENU_TRANS:
         search_kw_trans = st.text_input("🔍 대상 품목 통합 검색 (품명, 코드, 상세번호, 규격, 비고 등)", "", key="trans_search_box")
         
         try:
-            count_q = db.supabase.table("items").select("item_code", count="exact")
-            if search_kw_trans.strip():
-                kw = search_kw_trans.strip()
-                count_q = count_q.or_(f"item_code.ilike.%{kw}%,item_name.ilike.%{kw}%,item_detail_no.ilike.%{kw}%,model_spec.ilike.%{kw}%,remark.ilike.%{kw}%")
-            cnt_resp = count_q.execute()
-            total_trans_items = cnt_resp.count if hasattr(cnt_resp, "count") and cnt_resp.count is not None else 1000
+            all_trans_items = []
+            chunk_size = 1000
+            start = 0
+            while True:
+                resp = db.supabase.table("items").select("*").order("item_code", desc=False).range(start, start + chunk_size - 1).execute()
+                c_data = resp.data or []
+                all_trans_items.extend(c_data)
+                if len(c_data) < chunk_size:
+                    break
+                start += chunk_size
         except Exception:
-            total_trans_items = 1000
+            all_trans_items = []
 
-        PAGE_SIZE_TRANS = 100
-        total_trans_pages = max(1, math.ceil(total_trans_items / PAGE_SIZE_TRANS))
-
-        selected_trans_page = 1
-        if not search_kw_trans.strip() and total_trans_pages > 1:
-            col_tp1, _ = st.columns([1, 4])
-            with col_tp1:
-                selected_trans_page = st.selectbox("📄 대상 품목 페이지 선택 (100건씩)", list(range(1, total_trans_pages + 1)), format_func=lambda x: f"{x} 페이지 (총 {total_trans_pages}페이지)", key="trans_page_select")
-
-        start_t_idx = (selected_trans_page - 1) * PAGE_SIZE_TRANS
-        end_t_idx = start_t_idx + PAGE_SIZE_TRANS - 1
-
-        try:
-            t_query = db.supabase.table("items").select("*").order("item_code", desc=False)
-            if search_kw_trans.strip():
-                kw = search_kw_trans.strip()
-                t_query = t_query.or_(f"item_code.ilike.%{kw}%,item_name.ilike.%{kw}%,item_detail_no.ilike.%{kw}%,model_spec.ilike.%{kw}%,remark.ilike.%{kw}%")
-                items_list = t_query.limit(100).execute().data or []
-            else:
-                items_list = t_query.range(start_t_idx, end_t_idx).execute().data or []
-        except Exception:
+        if search_kw_trans.strip():
+            kw = search_kw_trans.strip().lower()
             items_list = []
+            for item in all_trans_items:
+                if (kw in str(item.get("item_code", "")).lower() or
+                    kw in str(item.get("item_name", "")).lower() or
+                    kw in str(item.get("item_detail_no", "")).lower() or
+                    kw in str(item.get("model_spec", "")).lower() or
+                    kw in str(item.get("remark", "")).lower()):
+                    items_list.append(item)
+        else:
+            PAGE_SIZE_TRANS = 100
+            total_trans_pages = max(1, math.ceil(len(all_trans_items) / PAGE_SIZE_TRANS))
+            selected_trans_page = 1
+            if total_trans_pages > 1:
+                col_tp1, _ = st.columns([1, 4])
+                with col_tp1:
+                    selected_trans_page = st.selectbox("📄 대상 품목 페이지 선택 (100건씩)", list(range(1, total_trans_pages + 1)), format_func=lambda x: f"{x} 페이지 (총 {total_trans_pages}페이지)", key="trans_page_select")
+            start_t_idx = (selected_trans_page - 1) * PAGE_SIZE_TRANS
+            end_t_idx = start_t_idx + PAGE_SIZE_TRANS
+            items_list = all_trans_items[start_t_idx:end_t_idx]
 
         if not items_list:
             st.warning("조건에 일치하는 품목이 없습니다. 검색어를 다시 확인해 주세요.")
@@ -1221,37 +1230,40 @@ elif menu == MENU_ITEMS:
         edit_search = st.text_input("🔍 수정할 품목 검색 (품명, 코드, 규격 등)", "", key="edit_search_box")
         
         try:
-            cnt_q2 = db.supabase.table("items").select("item_code", count="exact")
-            if edit_search.strip():
-                kw = edit_search.strip()
-                cnt_q2 = cnt_q2.or_(f"item_code.ilike.%{kw}%,item_name.ilike.%{kw}%,model_spec.ilike.%{kw}%")
-            cnt_resp2 = cnt_q2.execute()
-            total_edit_items = cnt_resp2.count if hasattr(cnt_resp2, "count") and cnt_resp2.count is not None else 1000
+            all_edit_items = []
+            chunk_size = 1000
+            start = 0
+            while True:
+                resp = db.supabase.table("items").select("*").order("item_code", desc=False).range(start, start + chunk_size - 1).execute()
+                c_data = resp.data or []
+                all_edit_items.extend(c_data)
+                if len(c_data) < chunk_size:
+                    break
+                start += chunk_size
         except Exception:
-            total_edit_items = 1000
+            all_edit_items = []
 
-        PAGE_SIZE_EDIT = 100
-        total_edit_pages = max(1, math.ceil(total_edit_items / PAGE_SIZE_EDIT))
-
-        selected_edit_page = 1
-        if not edit_search.strip() and total_edit_pages > 1:
-            col_ep1, _ = st.columns([1, 4])
-            with col_ep1:
-                selected_edit_page = st.selectbox("📄 수정할 품목 페이지 선택 (100건씩)", list(range(1, total_edit_pages + 1)), format_func=lambda x: f"{x} 페이지 (총 {total_edit_pages}페이지)", key="edit_page_select")
-
-        start_e_idx = (selected_edit_page - 1) * PAGE_SIZE_EDIT
-        end_e_idx = start_e_idx + PAGE_SIZE_EDIT - 1
-
-        try:
-            query = db.supabase.table("items").select("*").order("item_code", desc=False)
-            if edit_search.strip():
-                kw = edit_search.strip()
-                query = query.or_(f"item_code.ilike.%{kw}%,item_name.ilike.%{kw}%,model_spec.ilike.%{kw}%")
-                filtered_edit_items = query.limit(100).execute().data or []
-            else:
-                filtered_edit_items = query.range(start_e_idx, end_e_idx).execute().data or []
-        except Exception:
+        if edit_search.strip():
+            kw = edit_search.strip().lower()
             filtered_edit_items = []
+            for item in all_edit_items:
+                if (kw in str(item.get("item_code", "")).lower() or
+                    kw in str(item.get("item_name", "")).lower() or
+                    kw in str(item.get("model_spec", "")).lower() or
+                    kw in str(item.get("item_detail_no", "")).lower() or
+                    kw in str(item.get("remark", "")).lower()):
+                    filtered_edit_items.append(item)
+        else:
+            PAGE_SIZE_EDIT = 100
+            total_edit_pages = max(1, math.ceil(len(all_edit_items) / PAGE_SIZE_EDIT))
+            selected_edit_page = 1
+            if total_edit_pages > 1:
+                col_ep1, _ = st.columns([1, 4])
+                with col_ep1:
+                    selected_edit_page = st.selectbox("📄 수정할 품목 페이지 선택 (100건씩)", list(range(1, total_edit_pages + 1)), format_func=lambda x: f"{x} 페이지 (총 {total_edit_pages}페이지)", key="edit_page_select")
+            start_e_idx = (selected_edit_page - 1) * PAGE_SIZE_EDIT
+            end_e_idx = start_e_idx + PAGE_SIZE_EDIT
+            filtered_edit_items = all_edit_items[start_e_idx:end_e_idx]
 
         if filtered_edit_items:
             edit_opts = {f"[{i['item_code']}] {i['item_name']}": i for i in filtered_edit_items}
@@ -1601,7 +1613,6 @@ elif menu == MENU_HISTORY:
 
         styled_df = df_summary_display.drop(columns=["현재재고_raw"]).style
 
-        # 정확히 "0 개" 문자열일 때만 빨간색 강조 스타일 적용
         def color_zero_stock(val):
             if str(val).strip() == "0 개":
                 return 'color: #D32F2F; font-weight: bold;'
