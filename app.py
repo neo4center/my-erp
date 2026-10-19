@@ -554,9 +554,14 @@ if st.session_state.logged_in_user is None:
         # assets 폴더 내 slide_1.png, slide_2.png... 자동 감지 또는 수동 지정
         slide_images = []
         for i in range(1, 20):  # 최대 20페이지까지 탐색
-            img_path = f"assets/slide_{i}.png"
-            if os.path.exists(img_path):
-                slide_images.append(img_path)
+            # 소문자와 대문자 확장자 모두 체크
+            img_path_lower = f"assets/slide_{i}.png"
+            img_path_upper = f"assets/slide_{i}.PNG"
+            
+            if os.path.exists(img_path_lower):
+                slide_images.append(img_path_lower)
+            elif os.path.exists(img_path_upper):
+                slide_images.append(img_path_upper)
             else:
                 break
         
