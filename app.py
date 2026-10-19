@@ -2,6 +2,7 @@ import datetime
 import html
 import io
 import math
+import os
 import re
 import pandas as pd
 import streamlit as st
@@ -506,6 +507,7 @@ if "logged_in_user" not in st.session_state:
 
 if st.session_state.logged_in_user is None:
     st.title("🔐 광주오포센터 자동화 ERP - 로그인")
+    
     with st.form("login_form"):
         emp_no = st.text_input("사번 (ID) (*필수)")
         pw = st.text_input("비밀번호 (PW) (*필수)", type="password")
@@ -529,6 +531,55 @@ if st.session_state.logged_in_user is None:
                         st.error("❌ 사번 또는 비밀번호가 올바르지 않습니다.")
                 else:
                     st.error("사번과 비밀번호를 입력하세요.")
+
+    # 로그인 화면 하단 매뉴얼 및 가이드 섹션 추가
+    st.markdown("---")
+    st.markdown("### 📖 시스템 사용 매뉴얼 및 가이드")
+    
+    # 1. PPT 다운로드 버튼
+    if os.path.exists("manual.pptx"):
+        with open("manual.pptx", "rb") as file:
+            st.download_button(
+                label="📥 매뉴얼 PPT 파일 다운로드 (.pptx)",
+                data=file,
+                file_name="광주오포센터_ERP_사용매뉴얼.pptx",
+                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                use_container_width=True
+            )
+    else:
+        st.info("💡 'manual.pptx' 파일이 루트 디렉터리에 업로드되면 다운로드 버튼이 활성화됩니다.")
+
+    # 2. 웹에서 카드형 이미지 슬라이드로 보기
+    with st.expander("🖼️ 웹에서 카드형 매뉴얼 슬라이드 바로 보기"):
+        # assets 폴더 내 slide_1.png, slide_2.png... 자동 감지 또는 수동 지정
+        slide_images = []
+        for i in range(1, 20):  # 최대 20페이지까지 탐색
+            img_path = f"assets/slide_{i}.png"
+            if os.path.exists(img_path):
+                slide_images.append(img_path)
+            else:
+                break
+        
+        if slide_images:
+            if "slide_idx" not in st.session_state:
+                st.session_state.slide_idx = 0
+
+            col_prev, col_info, col_next = st.columns([1, 2, 1])
+            
+            if col_prev.button("◀ 이전 슬라이드") and st.session_state.slide_idx > 0:
+                st.session_state.slide_idx -= 1
+                st.rerun()
+                
+            col_info.markdown(f"<p style='text-align: center; font-weight: bold; margin-top: 10px;'>페이지 {st.session_state.slide_idx + 1} / {len(slide_images)}</p>", unsafe_allow_html=True)
+            
+            if col_next.button("다음 슬라이드 ▶") and st.session_state.slide_idx < len(slide_images) - 1:
+                st.session_state.slide_idx += 1
+                st.rerun()
+
+            st.image(slide_images[st.session_state.slide_idx], use_container_width=True)
+        else:
+            st.caption("ℹ️ 'assets/' 폴더에 `slide_1.png`, `slide_2.png` 형식으로 매뉴얼 이미지를 업로드하시면 카드형 슬라이드 뷰어가 활성화됩니다.")
+
     st.stop()
 
 # ---------------------------------------------------------
