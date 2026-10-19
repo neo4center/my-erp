@@ -581,11 +581,15 @@ if st.session_state.logged_in_user is None:
                 st.session_state.slide_idx += 1
                 st.rerun()
 
-            st.image(slide_images[st.session_state.slide_idx], use_container_width=True)
-        else:
-            st.caption("ℹ️ 'assets/' 폴더에 `slide_1.png`, `slide_2.png` 형식으로 매뉴얼 이미지를 업로드하시면 카드형 슬라이드 뷰어가 활성화됩니다.")
-
-    st.stop()
+           st.markdown(
+                f"""
+                <div style="display: flex; justify-content: center; margin-top: 10px; margin-bottom: 20px;">
+                    <img src="data:image/png;base64,{get_image_base64(slide_images[st.session_state.slide_idx])}" style="max-width: 650px; width: 100%; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            # ---------------------------------------------
 
 # ---------------------------------------------------------
 # 3. 메인 ERP 사이드바 및 메뉴 정의
