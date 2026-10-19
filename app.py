@@ -4,6 +4,7 @@ import io
 import math
 import os
 import re
+import base64
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
@@ -70,6 +71,13 @@ def clean_val(val, default="-"):
         return default
     s = str(val).strip().replace('"', "")
     return html.escape(s) if s and s.lower() not in ["nan", "none", ""] else default
+
+def get_image_base64(image_path):
+    try:
+        with open(image_path, "rb") as img_file:
+            return base64.b64encode(img_file.read()).decode("utf-8")
+    except Exception:
+        return ""
 
 def generate_next_item_code():
     try:
@@ -549,12 +557,10 @@ if st.session_state.logged_in_user is None:
     else:
         st.info("💡 'manual.pptx' 파일이 루트 디렉터리에 업로드되면 다운로드 버튼이 활성화됩니다.")
 
-    # 2. 웹에서 카드형 이미지 슬라이드로 보기
+    # 2. 웹에서 카드형 이미지 슬라이드로 보기 (A4 폭 비율 650px 적용)
     with st.expander("🖼️ 웹에서 카드형 매뉴얼 슬라이드 바로 보기"):
-        # assets 폴더 내 slide_1.png, slide_2.png... 자동 감지 또는 수동 지정
         slide_images = []
-        for i in range(1, 20):  # 최대 20페이지까지 탐색
-            # 소문자와 대문자 확장자 모두 체크
+        for i in range(1, 25):  # 최대 24페이지까지 탐색
             img_path_lower = f"assets/slide_{i}.png"
             img_path_upper = f"assets/slide_{i}.PNG"
             
@@ -581,15 +587,20 @@ if st.session_state.logged_in_user is None:
                 st.session_state.slide_idx += 1
                 st.rerun()
 
-           st.markdown(
+            # A4 용지 비율(폭 650px)로 가운데 정렬 및 테두리/그림자 효과 적용
+            img_base64 = get_image_base64(slide_images[st.session_state.slide_idx])
+            st.markdown(
                 f"""
-                <div style="display: flex; justify-content: center; margin-top: 10px; margin-bottom: 20px;">
-                    <img src="data:image/png;base64,{get_image_base64(slide_images[st.session_state.slide_idx])}" style="max-width: 650px; width: 100%; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                <div style="display: flex; justify-content: center; margin-top: 15px; margin-bottom: 20px;">
+                    <img src="data:image/png;base64,{img_base64}" style="max-width: 650px; width: 100%; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
                 </div>
                 """,
                 unsafe_allow_html=True
             )
-            # ---------------------------------------------
+        else:
+            st.caption("ℹ️ 'assets/' 폴더에 `slide_1.png` 또는 `slide_1.PNG` 형식으로 매뉴얼 이미지를 업로드하시면 카드형 슬라이드 뷰어가 활성화됩니다.")
+
+    st.stop()
 
 # ---------------------------------------------------------
 # 3. 메인 ERP 사이드바 및 메뉴 정의
