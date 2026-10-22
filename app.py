@@ -102,10 +102,14 @@ def get_year_from_date(date_str):
 @st.cache_data(ttl=600)
 def get_cached_exchange_rates():
     try:
-        resp = db.supabase.table("exchange_rates").select("year, currency, rate").execute()
+        resp = db.supabase.table("exchange_rates").select("*").execute()
         rates_map = {}
         for r in (resp.data or []):
-            rates_map[(r["year"], r["currency"].upper())] = safe_float(r["rate"], 1.0)
+            year_val = safe_int_clean(r.get("year"), 0)
+            curr_val = str(r.get("currency", "")).upper().strip()
+            rate_val = safe_float(r.get("rate"), 1.0)
+            if year_val > 0 and curr_val:
+                rates_map[(year_val, curr_val)] = rate_val
         return rates_map
     except Exception:
         return {}
@@ -540,11 +544,9 @@ if st.session_state.logged_in_user is None:
                 else:
                     st.error("사번과 비밀번호를 입력하세요.")
 
-    # 로그인 화면 하단 매뉴얼 및 가이드 섹션 추가
     st.markdown("---")
     st.markdown("### 📖 시스템 사용 매뉴얼 및 가이드")
     
-    # 1. PPT 다운로드 버튼
     if os.path.exists("manual.pptx"):
         with open("manual.pptx", "rb") as file:
             st.download_button(
@@ -557,10 +559,9 @@ if st.session_state.logged_in_user is None:
     else:
         st.info("💡 'manual.pptx' 파일이 루트 디렉터리에 업로드되면 다운로드 버튼이 활성화됩니다.")
 
-    # 2. 웹에서 카드형 이미지 슬라이드로 보기 (A4 폭 비율 650px 적용)
     with st.expander("🖼️ 웹에서 카드형 매뉴얼 슬라이드 바로 보기"):
         slide_images = []
-        for i in range(1, 25):  # 최대 24페이지까지 탐색
+        for i in range(1, 25):
             img_path_lower = f"assets/slide_{i}.png"
             img_path_upper = f"assets/slide_{i}.PNG"
             
@@ -587,7 +588,6 @@ if st.session_state.logged_in_user is None:
                 st.session_state.slide_idx += 1
                 st.rerun()
 
-            # A4 용지 비율(폭 650px)로 가운데 정렬 및 테두리/그림자 효과 적용
             img_base64 = get_image_base64(slide_images[st.session_state.slide_idx])
             st.markdown(
                 f"""
@@ -1909,24 +1909,51 @@ elif menu == MENU_HISTORY:
         st.info("조건에 일치하는 출고 이력이 있는 품목 데이터가 없습니다.")
 
 # ---------------------------------------------------------
-# 메뉴 5: 환율 설정 (게스트 접근 제한)
+# 메뉴 5: 환율 설정 (기입력 데이터 표시 및 수정 보완)
 # ---------------------------------------------------------
 elif menu == MENU_RATES:
     if is_guest:
         st.error("❌ 게스트 계정은 접근할 수 없는 메뉴입니다.")
         st.stop()
     st.subheader("⚙️ 연도별 기준 환율 관리 및 수정")
+    st.caption("💡 기존에 입력된 연도별 외화 환율을 실시간으로 조회하고 수정할 수 있습니다.")
     
     try:
-        resp = db.supabase.table("exchange_rates").select("id, year, currency, rate").order("year", desc=True).execute()
+        resp = db.supabase.table("exchange_rates").select("*").execute()
         rates_data = resp.data or []
-    except Exception:
+    except Exception as ex:
         rates_data = []
+        st.error(f"환율 정보를 불러오는 중 오류 발생: {ex}")
 
     if rates_data:
-        st.markdown("#### 📋 등록된 환율 목록 (값 수정 가능)")
-        df_rates = pd.DataFrame(rates_data)
+        formatted_rates = []
+        for row in rates_data:
+            formatted_rates.append({
+                "id": row.get("id"),
+                "year": safe_int_clean(row.get("year"), datetime.date.today().year),
+                "currency": str(row.get("currency", "")).upper().strip(),
+                "rate": safe_float(row.get("rate"), 1.0)
+            })
+
+        df_rates = pd.DataFrame(formatted_rates)
         df_rates = df_rates.sort_values(by=["year", "currency"], ascending=[False, True]).reset_index(drop=True)
+
+        st.markdown("#### 📋 등록된 환율 목록 현황")
+        
+        # 현황 요약 데이터프레임
+        display_df_rates = df_rates.copy()
+        display_df_rates["연도"] = display_df_rates["year"].apply(lambda x: f"{x}년")
+        display_df_rates["화폐"] = display_df_rates["currency"]
+        display_df_rates["기준 환율 (원)"] = display_df_rates["rate"].apply(lambda x: f"{x:,.2f} 원")
+
+        st.dataframe(
+            display_df_rates[["연도", "화폐", "기준 환율 (원)"]],
+            use_container_width=True,
+            hide_index=True
+        )
+
+        st.markdown("---")
+        st.markdown("#### ✏️ 등록된 환율 금액 일괄 수정")
 
         with st.form("edit_rates_batch_form"):
             updated_rates = []
@@ -1934,7 +1961,13 @@ elif menu == MENU_RATES:
                 rc1, rc2, rc3 = st.columns([1, 1, 2])
                 rc1.markdown(f"**{row['year']}년**")
                 rc2.markdown(f"**{row['currency']}**")
-                new_rate = rc3.number_input(f"환율 ({row['year']}년 {row['currency']})", value=float(row['rate']), step=1.0, key=f"rate_input_{row['id']}", label_visibility="collapsed")
+                new_rate = rc3.number_input(
+                    f"환율 ({row['year']}년 {row['currency']})",
+                    value=float(row['rate']),
+                    step=1.0,
+                    key=f"rate_input_{row['id']}_{idx}",
+                    label_visibility="collapsed"
+                )
                 
                 updated_rates.append({
                     "id": row['id'],
@@ -1964,7 +1997,7 @@ elif menu == MENU_RATES:
         r_curr = col2.selectbox("화폐", ["USD", "EUR", "JPY"])
         r_rate = col3.number_input("환율 (KRW)", value=1350.00, step=10.0)
         if st.form_submit_button("신규 환율 저장"):
-            db.supabase.table("exchange_rates").upsert({"year": r_year, "currency": r_curr, "rate": r_rate}).execute()
+            db.supabase.table("exchange_rates").upsert({"year": int(r_year), "currency": r_curr, "rate": float(r_rate)}).execute()
             st.success("✅ 신규 환율 설정 저장 완료!")
             st.cache_data.clear()
             st.rerun()
