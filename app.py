@@ -338,7 +338,6 @@ def render_a4_spec_card(item_code, is_guest_user=False):
     in_trs = "".join([f"<tr><td>{r['No']}</td><td>{r['일자']}</td><td>{r['구분']}</td><td>{r['수량']}</td><td>{r['원화환산액']}</td><td>{r['총금액']}</td><td>{r['담당자']}</td><td>{r['요청자']}</td><td>{r['비고']}</td></tr>" for r in in_rows]) if in_rows else "<tr><td colspan='9'>※ 선택한 기간 내 입고 내역이 없습니다.</td></tr>"
     out_trs = "".join([f"<tr><td>{r['No']}</td><td>{r['일자']}</td><td>{r['구분']}</td><td>{r['수량']}</td><td>{r['원화환산액']}</td><td>{r['총금액']}</td><td>{r['담당자']}</td><td>{r['요청자']}</td><td>{r['비고']}</td></tr>" for r in out_rows]) if out_rows else "<tr><td colspan='9'>※ 선택한 기간 내 출고 내역이 없습니다.</td></tr>"
     photo_url = item.get("photo_url")
-    img_html = f"<img src='{photo_url}' style='max-width:100%; max-height:200px; border-radius:6px;'/>" if photo_url else "<div style='background:#eef5ff; padding:40px 10px; text-align:center; color:#1976d2; font-weight:bold; border-radius:6px;'>등록된 사진 없음</div>"
 
     with st.container():
         st.markdown("<div class='a4-card'>", unsafe_allow_html=True)
@@ -550,7 +549,8 @@ MENU_ITEMS = "🏷️ 품목 관리"
 MENU_HISTORY = "🔍 입출고 내역 조회"
 MENU_RATES = "⚙️ 환율 설정"
 
-is_guest = (user.get("position") == "게스트" or user.get("is_admin") == 2)
+# [수정 포인트] 명확하게 게스트 직책이거나 관리자 권한이 2번(게스트용 권한)인 경우에만 True 설정
+is_guest = (str(user.get("position")).strip() == "게스트" or user.get("is_admin") == 2)
 
 if is_guest:
     menu_list = [MENU_STOCK, MENU_HISTORY]
@@ -903,30 +903,202 @@ if menu == MENU_STOCK:
         st.info("조건에 일치하는 품목 데이터가 없습니다.")
 
 # ---------------------------------------------------------
-# 메뉴 2: 입출고 등록 (게스트 접근 제한)
+# 메뉴 2: 입출고 등록
 # ---------------------------------------------------------
 elif menu == MENU_TRANS:
     if is_guest:
         st.error("❌ 게스트 계정은 접근할 수 없는 메뉴입니다.")
         st.stop()
+    
+    st.subheader("📝 자재 입출고 등록")
+    st.caption("💡 입고 또는 출고 내역을 입력하여 재고 수량을 실시간으로 업데이트합니다.")
+    
+    # 입출고 등록 폼 구현부 유지
+    with st.form("trans_form"):
+        col_t1, col_t2 = st.columns(2)
+        trans_type = col_t1.selectbox("입출고 구분", ["입고 (IN)", "출고 (OUT)"])
+        
+        # 품목 리스트 가져오기
+        try:
+            items_resp = db.supabase.table("items").select("item_code, item_name, unit_price").execute()
+            items_data = items_resp.data or []
+        except Exception:
+            items_data = []
+            
+        item_opts = {f"[{i['item_code']}] {i['item_name']}": i["item_code"] for i in items_data}
+        sel_item_label = col_t2.selectbox("대상 품목 선택", list(item_opts.keys()) if item_opts else ["품목 없음"])
+        
+        col_t3, col_t4 = st.columns(2)
+        qty_input = col_t3.number_input("수량 (EA)", min_value=1, value=1, step=1)
+        trans_date_input = col_t4.date_input("거래 일자", value=datetime.date.today())
+        
+        col_t5, col_t6 = st.columns(2)
+        requester_input = col_t5.text_input("요청자 / 부서", "-")
+        remark_input = col_t6.text_input("비고", "-")
+        
+        submit_trans = st.form_submit_button("입출고 등록 실행")
+        
+        if submit_trans:
+            if not item_opts:
+                st.error("등록된 품목이 없어 입출고를 등록할 수 없습니다.")
+            else:
+                icode_target = item_opts[sel_item_label]
+                ttype_val = "IN" if "입고" in trans_type else "OUT"
+                
+                # 단가 조회
+                matched_item = next((i for i in items_data if i["item_code"] == icode_target), None)
+                unit_price_val = safe_float(matched_item.get("unit_price"), 0.0) if matched_item else 0.0
+                
+                new_trans_payload = {
+                    "item_code": icode_target,
+                    "trans_type": ttype_val,
+                    "quantity": int(qty_input),
+                    "unit_price": unit_price_val,
+                    "trans_date": str(trans_date_input),
+                    "manager": f"{user['name']} {user['position']}",
+                    "requester": requester_input,
+                    "remark": remark_input
+                }
+                
+                try:
+                    db.supabase.table("stock_transactions").insert(new_trans_payload).execute()
+                    st.success(f"✅ 성공적으로 [{trans_type}] 처리가 완료되었습니다!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ 등록 중 오류가 발생했습니다: {e}")
 
 # ---------------------------------------------------------
-# 메뉴 3: 품목 관리 (게스트 접근 제한)
+# 메뉴 3: 품목 관리
 # ---------------------------------------------------------
 elif menu == MENU_ITEMS:
     if is_guest:
         st.error("❌ 게스트 계정은 접근할 수 없는 메뉴입니다.")
         st.stop()
+        
+    st.subheader("🏷️ 자재 품목 마스터 관리")
+    st.caption("💡 새로운 자재 품목을 등록하거나 기존 품목 정보를 수정·삭제합니다.")
+    
+    tab_add, tab_edit = st.tabs(["➕ 신규 품목 등록", "✏️ 기존 품목 수정/삭제"])
+    
+    with tab_add:
+        with st.form("new_item_form"):
+            new_code = st.text_input("품목코드 (자동생성 추천)", value=generate_next_item_code())
+            c_i1, c_i2 = st.columns(2)
+            new_name = c_i1.text_input("품명 (*필수)")
+            new_detail_no = c_i2.text_input("상세번호 (Part No 등)")
+            
+            c_i3, c_i4 = st.columns(2)
+            new_model = c_i3.text_input("규격 / 모델")
+            new_cat_type = c_i4.selectbox("구분", ["전기", "기계", "소방", "기타"])
+            
+            c_i5, c_i6, c_i7 = st.columns(3)
+            new_cat_main = c_i5.text_input("대분류")
+            new_cat_sub = c_i6.text_input("소분류")
+            new_shelf = c_i7.text_input("선반 번호")
+            
+            c_i8, c_i9 = st.columns(2)
+            new_zone = c_i8.text_input("설치 구역 (Zone)")
+            new_device = c_i9.text_input("설치 기기명")
+            
+            c_i10, c_i11, c_i12 = st.columns(3)
+            new_maker = c_i10.text_input("Maker (제조사)")
+            new_curr = c_i11.selectbox("화폐 단위", ["KRW", "USD", "EUR", "JPY", "CNY"])
+            new_price = c_i12.number_input("단가", min_value=0.0, value=0.0, step=100.0)
+            
+            c_i13, c_i14 = st.columns(2)
+            new_indate = c_i13.date_input("최초 입고일", value=datetime.date.today())
+            new_photo = c_i14.text_input("사진 URL (선택)")
+            
+            new_remark = st.text_input("비고")
+            
+            submitted_item = st.form_submit_button("신규 품목 등록하기")
+            
+            if submitted_item:
+                if not new_name.strip():
+                    st.error("품명은 필수 입력 항목입니다.")
+                else:
+                    payload = {
+                        "item_code": new_code.strip(),
+                        "item_name": new_name.strip(),
+                        "item_detail_no": new_detail_no.strip(),
+                        "model_spec": new_model.strip(),
+                        "category_type": new_cat_type,
+                        "category_main": new_cat_main.strip(),
+                        "category_sub": new_cat_sub.strip(),
+                        "shelf_no": new_shelf.strip(),
+                        "zone": new_zone.strip(),
+                        "device_name": new_device.strip(),
+                        "maker": new_maker.strip(),
+                        "currency": new_curr,
+                        "unit_price": float(new_price),
+                        "in_date": str(new_indate),
+                        "photo_url": new_photo.strip() if new_photo.strip() else None,
+                        "remark": new_remark.strip()
+                    }
+                    try:
+                        db.supabase.table("items").insert(payload).execute()
+                        st.success(f"✅ 신규 품목 [{new_code}]이 성공적으로 등록되었습니다!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ 등록 실패: {e}")
+
+    with tab_edit:
+        st.info("💡 수정 또는 삭제할 품목을 선택하세요.")
+        try:
+            items_resp = db.supabase.table("items").select("*").order("item_code").execute()
+            all_items_master = items_resp.data or []
+        except:
+            all_items_master = []
+            
+        if all_items_master:
+            master_opts = {f"[{i['item_code']}] {i['item_name']} (규격: {i.get('model_spec', '-')})": i for i in all_items_master}
+            sel_master_label = st.selectbox("관리할 품목 선택", list(master_opts.keys()))
+            target_item_obj = master_opts[sel_master_label]
+            
+            with st.form("edit_item_form"):
+                e_name = st.text_input("품명", value=target_item_obj.get("item_name", ""))
+                e_detail = st.text_input("상세번호", value=target_item_obj.get("item_detail_no", ""))
+                e_model = st.text_input("규격/모델", value=target_item_obj.get("model_spec", ""))
+                e_maker = st.text_input("Maker", value=target_item_obj.get("maker", ""))
+                e_price = st.number_input("단가", value=safe_float(target_item_obj.get("unit_price"), 0.0))
+                e_remark = st.text_input("비고", value=target_item_obj.get("remark", ""))
+                
+                col_btn1, col_btn2 = st.columns(2)
+                update_btn = col_btn1.form_submit_button("정보 수정 저장")
+                delete_btn = col_btn2.form_submit_button("품목 삭제")
+                
+                if update_btn:
+                    try:
+                        db.supabase.table("items").update({
+                            "item_name": e_name,
+                            "item_detail_no": e_detail,
+                            "model_spec": e_model,
+                            "maker": e_maker,
+                            "unit_price": e_price,
+                            "remark": e_remark
+                        }).eq("item_code", target_item_obj["item_code"]).execute()
+                        st.success("✅ 품목 정보가 수정되었습니다.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ 수정 실패: {e}")
+                        
+                if delete_btn:
+                    try:
+                        db.supabase.table("items").delete().eq("item_code", target_item_obj["item_code"]).execute()
+                        st.success("🗑️ 품목이 삭제되었습니다.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ 삭제 실패: {e}")
 
 # ---------------------------------------------------------
-# 메뉴 4: 품목별 입출고 집계 및 이력 조회 (게스트 대응 보완)
+# 메뉴 4: 품목별 입출고 집계 및 이력 조회
 # ---------------------------------------------------------
 elif menu == MENU_HISTORY:
     st.subheader("🔍 품목별 입출고 집계 및 소진 추이 조회")
     if is_guest:
         st.caption("💡 품목별로 총 입고량, 총 출고량, 현재 재고 수량 및 세부 입출고 이력을 요약하여 보여줍니다. (단가 및 금액 정보는 보안상 비공개됩니다)")
     else:
-        st.caption("💡 품목별로 총 입고량(기초재고 포함), 총 출고량, 현재 재고 수량 및 세부 입출고 이력을 요약하여 보여줍니다. (단, 출고 수량이 1개 이상인 품목 대상)")
+        st.caption("💡 품목별로 총 입고량(기초재고 포함), 총 출고량, 현재 재고 수량 및 세부 입출고 이력을 요약하여 보여줍니다.")
 
     today_date = datetime.date.today()
     period_option = st.radio(
@@ -1273,17 +1445,96 @@ elif menu == MENU_HISTORY:
         st.info("조건에 일치하는 내역이 없습니다.")
 
 # ---------------------------------------------------------
-# 메뉴 5: 환율 설정 (게스트 접근 제한)
+# 메뉴 5: 환율 설정
 # ---------------------------------------------------------
 elif menu == MENU_RATES:
     if is_guest:
         st.error("❌ 게스트 계정은 접근할 수 없는 메뉴입니다.")
         st.stop()
+        
+    st.subheader("⚙️ 연도별/통화별 환율 설정")
+    st.caption("💡 자재 단가 환산에 적용될 연도별 기준 환율을 관리합니다.")
+    
+    with st.form("rate_form"):
+        r_col1, r_col2, r_col3 = st.columns(3)
+        target_year = r_col1.number_input("적용 연도", min_value=2020, max_value=2030, value=datetime.date.today().year)
+        target_curr = r_col2.selectbox("통화", ["USD", "EUR", "JPY", "CNY"])
+        target_rate = r_col3.number_input("환율 (원)", min_value=0.0, value=1300.0, step=10.0)
+        
+        save_rate_btn = st.form_submit_button("환율 정보 저장/업데이트")
+        
+        if save_rate_btn:
+            try:
+                # 기존 존재 여부 확인 후 Upsert
+                db.supabase.table("exchange_rates").upsert({
+                    "year": int(target_year),
+                    "currency": target_curr,
+                    "rate": float(target_rate)
+                }, on_conflict="year,currency").execute()
+                st.success(f"✅ [{target_year}년] {target_curr} 환율이 {target_rate:,.2f}원으로 설정되었습니다.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ 환율 저장 실패: {e}")
+
+    # 등록된 환율 목록 조회
+    try:
+        rates_resp = db.supabase.table("exchange_rates").select("*").order("year", desc=True).execute()
+        rates_data = rates_resp.data or []
+        if rates_data:
+            st.markdown("---")
+            st.markdown("#### 📋 등록된 환율 현황")
+            st.dataframe(pd.DataFrame(rates_data), use_container_width=True)
+    except:
+        pass
 
 # ---------------------------------------------------------
-# 메뉴 6: 사용자 관리 (게스트 접근 제한)
+# 메뉴 6: 사용자 관리 (관리자)
 # ---------------------------------------------------------
 elif menu == "👥 사용자 관리 (관리자)":
     if is_guest:
         st.error("❌ 게스트 계정은 접근할 수 없는 메뉴입니다.")
         st.stop()
+        
+    st.subheader("👥 사용자 계정 및 권한 관리")
+    st.caption("💡 시스템에 접근할 수 있는 사용자 계정을 추가하고 권한(관리자/일반/게스트)을 설정합니다.")
+    
+    try:
+        users_resp = db.supabase.table("users").select("*").execute()
+        users_list = users_resp.data or []
+    except:
+        users_list = []
+        
+    if users_list:
+        st.dataframe(pd.DataFrame(users_list)[["emp_no", "name", "position", "is_admin"]], use_container_width=True)
+    
+    st.markdown("---")
+    with st.form("add_user_form"):
+        st.markdown("#### ➕ 신규 사용자 추가")
+        u_col1, u_col2 = st.columns(2)
+        new_emp_no = u_col1.text_input("사번 (ID)")
+        new_name = u_col2.text_input("성명")
+        
+        u_col3, u_col4 = st.columns(2)
+        new_pw = u_col3.text_input("비밀번호", type="password")
+        new_pos = u_col4.selectbox("직책", POSITIONS)
+        
+        new_is_admin = st.selectbox("권한 등급", [0, 1, 2], format_func=lambda x: "일반 사용자 (0)" if x==0 else ("시스템 관리자 (1)" if x==1 else "게스트 사용자 (2)"))
+        
+        add_user_btn = st.form_submit_button("사용자 등록")
+        
+        if add_user_btn:
+            if not new_emp_no.strip() or not new_name.strip() or not new_pw.strip():
+                st.error("모든 필수 정보를 입력해주세요.")
+            else:
+                try:
+                    db.supabase.table("users").insert({
+                        "emp_no": new_emp_no.strip(),
+                        "name": new_name.strip(),
+                        "password": new_pw.strip(),
+                        "position": new_pos,
+                        "is_admin": int(new_is_admin)
+                    }).execute()
+                    st.success(f"✅ 사용자 [{new_name}]님이 성공적으로 등록되었습니다.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ 사용자 등록 실패: {e}")
