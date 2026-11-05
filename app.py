@@ -335,8 +335,6 @@ def render_a4_spec_card(item_code, is_guest_user=False):
     </style>
     """, unsafe_allow_html=True)
 
-    in_trs = "".join([f"<tr><td>{r['No']}</td><td>{r['일자']}</td><td>{r['구분']}</td><td>{r['수량']}</td><td>{r['원화환산액']}</td><td>{r['총금액']}</td><td>{r['담당자']}</td><td>{r['요청자']}</td><td>{r['비고']}</td></tr>" for r in in_rows]) if in_rows else "<tr><td colspan='9'>※ 선택한 기간 내 입고 내역이 없습니다.</td></tr>"
-    out_trs = "".join([f"<tr><td>{r['No']}</td><td>{r['일자']}</td><td>{r['구분']}</td><td>{r['수량']}</td><td>{r['원화환산액']}</td><td>{r['총금액']}</td><td>{r['담당자']}</td><td>{r['요청자']}</td><td>{r['비고']}</td></tr>" for r in out_rows]) if out_rows else "<tr><td colspan='9'>※ 선택한 기간 내 출고 내역이 없습니다.</td></tr>"
     photo_url = item.get("photo_url")
 
     with st.container():
@@ -549,7 +547,6 @@ MENU_ITEMS = "🏷️ 품목 관리"
 MENU_HISTORY = "🔍 입출고 내역 조회"
 MENU_RATES = "⚙️ 환율 설정"
 
-# [수정 포인트] 명확하게 게스트 직책이거나 관리자 권한이 2번(게스트용 권한)인 경우에만 True 설정
 is_guest = (str(user.get("position")).strip() == "게스트" or user.get("is_admin") == 2)
 
 if is_guest:
@@ -903,7 +900,7 @@ if menu == MENU_STOCK:
         st.info("조건에 일치하는 품목 데이터가 없습니다.")
 
 # ---------------------------------------------------------
-# 메뉴 2: 입출고 등록 (게스트 접근 제한)
+# 메뉴 2: 입출고 등록 (최신 상세버전 반영 완료)
 # ---------------------------------------------------------
 elif menu == MENU_TRANS:
     if is_guest:
@@ -1292,10 +1289,7 @@ elif menu == MENU_ITEMS:
 # ---------------------------------------------------------
 elif menu == MENU_HISTORY:
     st.subheader("🔍 품목별 입출고 집계 및 소진 추이 조회")
-    if is_guest:
-        st.caption("💡 품목별로 총 입고량, 총 출고량, 현재 재고 수량 및 세부 입출고 이력을 요약하여 보여줍니다. (단가 및 금액 정보는 보안상 비공개됩니다)")
-    else:
-        st.caption("💡 품목별로 총 입고량(기초재고 포함), 총 출고량, 현재 재고 수량 및 세부 입출고 이력을 요약하여 보여줍니다.")
+    st.caption("💡 품목별로 총 입고량, 총 출고량, 현재 재고 수량 및 세부 입출고 이력을 요약하여 보여줍니다.")
 
     today_date = datetime.date.today()
     period_option = st.radio(
@@ -1343,7 +1337,6 @@ elif menu == MENU_HISTORY:
     item_latest_price_map = {}
     item_latest_date_map = {}
     item_latest_dt_obj_map = {}
-    item_out_count_map = {}
 
     for t in all_trans_resp:
         ic = t.get("item_code")
@@ -1359,8 +1352,6 @@ elif menu == MENU_HISTORY:
             item_calc_stock_map[ic] = 0
         if ic not in item_total_in_all_map:
             item_total_in_all_map[ic] = 0
-        if ic not in item_out_count_map:
-            item_out_count_map[ic] = 0
 
         if ttype in ["IN", "입고"]:
             item_calc_stock_map[ic] += q
@@ -1373,7 +1364,6 @@ elif menu == MENU_HISTORY:
                     item_latest_price_map[ic] = t_price
         elif ttype in ["OUT", "출고"]:
             item_calc_stock_map[ic] -= q
-            item_out_count_map[ic] += q
 
     item_info_map = {}
     try:
@@ -1403,9 +1393,6 @@ elif menu == MENU_HISTORY:
     for t in all_trans_resp:
         icode = str(t.get("item_code", "-")).strip().upper()
         
-        if not is_guest and item_out_count_map.get(icode, 0) < 1:
-            continue
-
         t_dt = parse_standard_date(t.get("trans_date", ""))
         if not (start_date_filter <= t_dt <= end_date_filter):
             continue
@@ -1662,7 +1649,6 @@ elif menu == MENU_RATES:
         
         if save_rate_btn:
             try:
-                # 기존 존재 여부 확인 후 Upsert
                 db.supabase.table("exchange_rates").upsert({
                     "year": int(target_year),
                     "currency": target_curr,
@@ -1673,7 +1659,6 @@ elif menu == MENU_RATES:
             except Exception as e:
                 st.error(f"❌ 환율 저장 실패: {e}")
 
-    # 등록된 환율 목록 조회
     try:
         rates_resp = db.supabase.table("exchange_rates").select("*").order("year", desc=True).execute()
         rates_data = rates_resp.data or []
