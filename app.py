@@ -768,27 +768,50 @@ if menu == MENU_STOCK:
         unit_krw = round(latest_price * rate)
         stock_amt = round(unit_krw * calc_qty)
 
-        table_rows.append({
-            "사진": item.get("photo_url"),
-            "Lot ID": "-",
-            "품목코드": icode,
-            "품명": iname,
-            "상세번호": detail_no,
-            "규격/모델": model_spec,
-            "구분": category_type,
-            "분류체계": category_full,
-            "대분류": category_main,
-            "구역": safe_str_clean(item.get("zone")),
-            "기기명": device_name,
-            "Maker": maker,
-            "입고일": latest_date,
-            "현재재고": calc_qty,
-            "화폐단위": curr,
-            "단가": latest_price,
-            "원화환산액": unit_krw,
-            "재고금액": stock_amt,
-            "비고": remark
-        })
+        if is_guest:
+            table_rows.append({
+                "사진": item.get("photo_url"),
+                "Lot ID": "-",
+                "품목코드": icode,
+                "품명": iname,
+                "상세번호": detail_no,
+                "규격/모델": model_spec,
+                "구분": category_type,
+                "분류체계": category_full,
+                "대분류": category_main,
+                "구역": safe_str_clean(item.get("zone")),
+                "기기명": device_name,
+                "Maker": maker,
+                "입고일": latest_date,
+                "현재재고": calc_qty,
+                "화폐단위": "🔒",
+                "단가": "🔒",
+                "원화환산액": "🔒",
+                "재고금액": "🔒",
+                "비고": remark
+            })
+        else:
+            table_rows.append({
+                "사진": item.get("photo_url"),
+                "Lot ID": "-",
+                "품목코드": icode,
+                "품명": iname,
+                "상세번호": detail_no,
+                "규격/모델": model_spec,
+                "구분": category_type,
+                "분류체계": category_full,
+                "대분류": category_main,
+                "구역": safe_str_clean(item.get("zone")),
+                "기기명": device_name,
+                "Maker": maker,
+                "입고일": latest_date,
+                "현재재고": calc_qty,
+                "화폐단위": curr,
+                "단가": latest_price,
+                "원화환산액": unit_krw,
+                "재고금액": stock_amt,
+                "비고": remark
+            })
 
     if table_rows:
         df_stock = pd.DataFrame(table_rows)
@@ -808,7 +831,7 @@ if menu == MENU_STOCK:
         if sel_cat_main != "전체":
             df_stock = df_stock[df_stock["대분류"] == sel_cat_main]
 
-        current_page_asset_amt = sum(df_stock["재고금액"])
+        current_page_asset_amt = 0 if is_guest else sum(df_stock[df_stock["재고금액"] != "🔒"]["재고금액"])
 
         try:
             full_excel_items = []
@@ -855,10 +878,10 @@ if menu == MENU_STOCK:
                 "Maker": safe_str_clean(item.get("maker")),
                 "입고일": latest_date,
                 "현재재고 / EA": calc_qty,
-                "화폐단위": curr,
-                "단가": latest_price,
-                "원화환산액 / 원": unit_krw,
-                "재고금액 / 원": stock_amt,
+                "화폐단위": "🔒 비공개" if is_guest else curr,
+                "단가": "🔒 비공개" if is_guest else latest_price,
+                "원화환산액 / 원": "🔒 비공개" if is_guest else unit_krw,
+                "재고금액 / 원": "🔒 비공개" if is_guest else stock_amt,
                 "비고": safe_str_clean(item.get("remark"))
             })
 
@@ -873,27 +896,33 @@ if menu == MENU_STOCK:
 
         with col_p_btn:
             st.write("")
-            st.download_button("📥 전체 품목 엑셀 다운로드 (.xlsx)", out_excel.getvalue(), file_name=f"ERP_전체재고현황_{datetime.date.today()}.xlsx")
+            if not is_guest:
+                st.download_button("📥 전체 품목 엑셀 다운로드 (.xlsx)", out_excel.getvalue(), file_name=f"ERP_전체재고현황_{datetime.date.today()}.xlsx")
 
-        st.markdown(f"<p style='color: #666; font-size: 13px; margin-top: -10px; margin-bottom: 15px;'>📌 현재 페이지(또는 검색결과) 재고 자산 금액: <b>{current_page_asset_amt:,.0f} 원</b></p>", unsafe_allow_html=True)
+        if not is_guest:
+            st.markdown(f"<p style='color: #666; font-size: 13px; margin-top: -10px; margin-bottom: 15px;'>📌 현재 페이지(또는 검색결과) 재고 자산 금액: <b>{current_page_asset_amt:,.0f} 원</b></p>", unsafe_allow_html=True)
 
         col1, col2, _ = st.columns([2, 2, 2])
         col1.metric("전체 등록 품목 수", f"{total_count} 개")
-        col2.metric("총 재고 자산 금액", f"{total_all_asset_amt:,.0f} 원")
+        if not is_guest:
+            col2.metric("총 재고 자산 금액", f"{total_all_asset_amt:,.0f} 원")
+        else:
+            col2.metric("총 재고 자산 금액", "🔒 (비공개)")
 
         display_df = df_stock.drop(columns=["대분류"], errors="ignore").copy()
         if "현재재고" in display_df.columns:
             display_df["현재재고"] = display_df["현재재고"].apply(lambda x: f"{x} 개")
-        if "원화환산액" in display_df.columns:
-            display_df["원화환산액"] = display_df["원화환산액"].apply(lambda x: f"{x:,} 원")
-        if "재고금액" in display_df.columns:
-            display_df["재고금액"] = display_df["재고금액"].apply(lambda x: f"{x:,} 원")
+        if not is_guest:
+            if "원화환산액" in display_df.columns:
+                display_df["원화환산액"] = display_df["원화환산액"].apply(lambda x: f"{x:,} 원" if isinstance(x, (int, float)) else x)
+            if "재고금액" in display_df.columns:
+                display_df["재고금액"] = display_df["재고금액"].apply(lambda x: f"{x:,} 원" if isinstance(x, (int, float)) else x)
 
         selection_event = st.dataframe(
             display_df,
             column_config={
                 "사진": st.column_config.ImageColumn("사진"),
-                "단가": st.column_config.NumberColumn(format="%,.2f")
+                "단가": st.column_config.NumberColumn(format="%,.2f") if not is_guest else st.column_config.TextColumn("단가")
             },
             use_container_width=True,
             on_select="rerun",
@@ -913,10 +942,10 @@ if menu == MENU_STOCK:
         if item_list:
             default_idx = list(item_list.values()).index(selected_code) if selected_code in item_list.values() else 0
             sel_label = st.selectbox("📋 상세 명세서 조회 품목 선택:", list(item_list.keys()), index=default_idx)
-            render_a4_spec_card(item_list[sel_label])
+            render_a4_spec_card(item_list[sel_label], is_guest_user=is_guest)
     else:
         st.info("조건에 일치하는 품목 데이터가 없습니다.")
-
+        
 # ---------------------------------------------------------
 # 메뉴 2: 입출고 등록 (게스트 접근 제한)
 # ---------------------------------------------------------
