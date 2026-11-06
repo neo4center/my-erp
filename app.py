@@ -150,15 +150,9 @@ def render_a4_spec_card(item_code, is_guest_user=False):
         key=f"spec_period_radio_{item_code}"
     )
 
-    # 프린트 버튼 컴포넌트 추가
     with col_pr2:
         st.write("")
-        if st.button("🖨️ 명세서 프린트 (인쇄)", key=f"print_btn_{item_code}", use_container_width=True, type="primary"):
-            components.html("""
-                <script>
-                    window.parent.print();
-                </script>
-            """, height=0)
+        print_clicked = st.button("🖨️ 명세서 프린트 (인쇄)", key=f"print_btn_{item_code}", use_container_width=True, type="primary")
 
     today_dt = datetime.date.today()
     if spec_period_opt == "3개월":
@@ -343,17 +337,92 @@ def render_a4_spec_card(item_code, is_guest_user=False):
     .trans-table th { background-color: #f8f9fa; font-weight: bold; }
     .stock-calc-banner { background-color: #E3F2FD; border: 2px solid #2196F3; border-radius: 8px; padding: 15px; text-align: center; font-size: 16px; font-weight: bold; color: #0D47A1; margin: 20px 0; }
     .table-scroll-container { max-height: 380px; overflow-y: auto; border: 1px solid #ccc; margin-bottom: 15px; }
-    
-    @media print {
-        body * { visibility: hidden; }
-        .a4-card, .a4-card * { visibility: visible; }
-        .a4-card { position: absolute; left: 0; top: 0; width: 100%; border: none; padding: 0; }
-        header, footer, nav, .stSidebar { display: none !important; }
-    }
     </style>
     """, unsafe_allow_html=True)
 
     photo_url = item.get("photo_url")
+
+    # HTML 렌더링용 문자열 생성
+    in_table_html_str = ""
+    if in_rows:
+        in_table_html_str = "<table class='trans-table'><thead><tr style='background-color: #f8f9fa;'><th>No</th><th>일자</th><th>구분</th><th>수량</th><th>원화환산액</th><th>총금액</th><th>담당자</th><th>요청자</th><th>비고</th></tr></thead><tbody>"
+        for r in in_rows:
+            in_table_html_str += f"<tr><td>{r['No']}</td><td>{r['일자']}</td><td>{r['구분']}</td><td>{r['수량']}</td><td>{r['원화환산액']}</td><td>{r['총금액']}</td><td>{r['담당자']}</td><td>{r['요청자']}</td><td>{r['비고']}</td></tr>"
+        in_table_html_str += "</tbody></table>"
+    else:
+        in_table_html_str = "<p style='font-size: 13px; color: #666;'>※ 선택한 기간 내 입고 내역이 없습니다.</p>"
+
+    out_table_html_str = ""
+    if out_rows:
+        out_table_html_str = "<table class='trans-table'><thead><tr style='background-color: #f8f9fa;'><th>No</th><th>일자</th><th>구분</th><th>수량</th><th>원화환산액</th><th>총금액</th><th>담당자</th><th>요청자</th><th>비고</th></tr></thead><tbody>"
+        for r in out_rows:
+            out_table_html_str += f"<tr><td>{r['No']}</td><td>{r['일자']}</td><td>{r['구분']}</td><td>{r['수량']}</td><td>{r['원화환산액']}</td><td>{r['총금액']}</td><td>{r['담당자']}</td><td>{r['요청자']}</td><td>{r['비고']}</td></tr>"
+        out_table_html_str += "</tbody></table>"
+    else:
+        out_table_html_str = "<p style='font-size: 13px; color: #666;'>※ 선택한 기간 내 출고 내역이 없습니다.</p>"
+
+    if is_guest_user:
+        info_table_html = f"""
+        <table class="info-table">
+            <tr><th>품목코드</th><td><code>{clean_val(item.get('item_code'))}</code></td><th>품명</th><td><b>{clean_val(item.get('item_name'))}</b></td></tr>
+            <tr><th>상세번호</th><td>{clean_val(item.get('item_detail_no'))}</td><th>규격/모델</th><td>{clean_val(item.get('model_spec'))}</td></tr>
+            <tr><th>구분</th><td>{clean_val(item.get('category_type'))}</td><th>분류체계</th><td>{category_full}</td></tr>
+            <tr><th>설치구역/기기</th><td>{clean_val(item.get('zone'))} / {clean_val(item.get('device_name'))}</td><th>Maker</th><td>{clean_val(item.get('maker'))}</td></tr>
+            <tr><th>화폐단위/단가</th><td>🔒 (비공개)</td><th>적용 환율({representative_year}년)</th><td>🔒 (비공개)</td></tr>
+            <tr><th>원화환산액</th><td><b>🔒 (비공개)</b></td><th>현재재고 / 재고금액</th><td><b>{current_stock:,} 개 / 🔒 (비공개)</b></td></tr>
+            <tr><th>비고</th><td colspan="3">{clean_val(item.get('remark'))}</td></tr>
+        </table>
+        """
+        in_amt_str = "🔒 (비공개)"
+        out_amt_str = "🔒 (비공개)"
+    else:
+        info_table_html = f"""
+        <table class="info-table">
+            <tr><th>품목코드</th><td><code>{clean_val(item.get('item_code'))}</code></td><th>품명</th><td><b>{clean_val(item.get('item_name'))}</b></td></tr>
+            <tr><th>상세번호</th><td>{clean_val(item.get('item_detail_no'))}</td><th>규격/모델</th><td>{clean_val(item.get('model_spec'))}</td></tr>
+            <tr><th>구분</th><td>{clean_val(item.get('category_type'))}</td><th>분류체계</th><td>{category_full}</td></tr>
+            <tr><th>설치구역/기기</th><td>{clean_val(item.get('zone'))} / {clean_val(item.get('device_name'))}</td><th>Maker</th><td>{clean_val(item.get('maker'))}</td></tr>
+            <tr><th>화폐단위/단가</th><td>{curr} / {representative_price:,.2f}</td><th>적용 환율({representative_year}년)</th><td>{representative_rate:,.2f} 원</td></tr>
+            <tr><th>원화환산액</th><td><b>{unit_krw_display:,} 원</b> (최신단가적용)</td><th>현재재고 / 재고금액</th><td><b>{current_stock:,} 개 / {total_val_krw:,} 원</b></td></tr>
+            <tr><th>비고</th><td colspan="3">{clean_val(item.get('remark'))}</td></tr>
+        </table>
+        """
+        in_amt_str = f"{total_in_amt:,} 원"
+        out_amt_str = f"{total_out_amt:,} 원"
+
+    card_html_content = f"""
+    <div class="a4-card">
+        <div class="a4-header"><h2>자재품목명세서</h2><p>발행일자: {datetime.date.today()} &nbsp;|&nbsp; <span style='color: #d81b60; font-weight: bold;'>({period_badge_text})</span></p></div>
+        <table class="info-table">
+            <tr><th>품목코드</th><td><code>{clean_val(item.get('item_code'))}</code></td><th>품명</th><td><b>{clean_val(item.get('item_name'))}</b></td></tr>
+            <tr><th>상세번호</th><td>{clean_val(item.get('item_detail_no'))}</td><th>규격/모델</th><td>{clean_val(item.get('model_spec'))}</td></tr>
+            <tr><th>구분</th><td>{clean_val(item.get('category_type'))}</td><th>분류체계</th><td>{category_full}</td></tr>
+            <tr><th>설치구역/기기</th><td>{clean_val(item.get('zone'))} / {clean_val(item.get('device_name'))}</td><th>Maker</th><td>{clean_val(item.get('maker'))}</td></tr>
+            <tr><th>비고</th><td colspan="3">{clean_val(item.get('remark'))}</td></tr>
+        </table>
+        <h3 style="font-size: 16px; margin-top: 15px;">📥 1. 입고 내역 ({period_badge_text})</h3>
+        {in_table_html_str}
+        <h3 style="font-size: 16px; margin-top: 15px;">📤 2. 출고 내역 ({period_badge_text})</h3>
+        {out_table_html_str}
+    </div>
+    """
+
+    # 새 창 팝업 인쇄 스크립트 트리거
+    if print_clicked:
+        escaped_html = card_html_content.replace('"', '\\"').replace('\n', ' ')
+        components.html(f"""
+            <script>
+                var win = window.open('', '_blank', 'height=800,width=900');
+                win.document.write('<html><head><title>자재품목명세서 인쇄</title>');
+                win.document.write('<style>body {{ font-family: sans-serif; padding: 20px; color: #111; }} .a4-card {{ background-color: #ffffff; border: 2px solid #333; border-radius: 8px; padding: 25px; }} .a4-header {{ text-align: center; border-bottom: 3px double #333; padding-bottom: 10px; margin-bottom: 20px; }} .info-table, .trans-table {{ width: 100%; border-collapse: collapse; margin-bottom: 15px; }} .info-table th, .info-table td, .trans-table th, .trans-table td {{ border: 1px solid #ccc; padding: 8px 12px; font-size: 13px; text-align: center; }} .info-table th {{ background-color: #f4f4f4; font-weight: bold; width: 18%; }} .trans-table th {{ background-color: #f8f9fa; font-weight: bold; }}</style>');
+                win.document.write('</head><body>');
+                win.document.write("{escaped_html}");
+                win.document.write('</body></html>');
+                win.document.close();
+                win.focus();
+                setTimeout(function() {{ win.print(); }}, 500);
+            </script>
+        """, height=0)
 
     with st.container():
         st.markdown("<div class='a4-card'>", unsafe_allow_html=True)
@@ -367,31 +436,7 @@ def render_a4_spec_card(item_code, is_guest_user=False):
                 st.info("등록된 사진 없음")
 
         with col_info:
-            if is_guest_user:
-                html_table = f"""
-                <table class="info-table">
-                    <tr><th>품목코드</th><td><code>{clean_val(item.get('item_code'))}</code></td><th>품명</th><td><b>{clean_val(item.get('item_name'))}</b></td></tr>
-                    <tr><th>상세번호</th><td>{clean_val(item.get('item_detail_no'))}</td><th>규격/모델</th><td>{clean_val(item.get('model_spec'))}</td></tr>
-                    <tr><th>구분</th><td>{clean_val(item.get('category_type'))}</td><th>분류체계</th><td>{category_full}</td></tr>
-                    <tr><th>설치구역/기기</th><td>{clean_val(item.get('zone'))} / {clean_val(item.get('device_name'))}</td><th>Maker</th><td>{clean_val(item.get('maker'))}</td></tr>
-                    <tr><th>화폐단위/단가</th><td>🔒 (비공개)</td><th>적용 환율({representative_year}년)</th><td>🔒 (비공개)</td></tr>
-                    <tr><th>원화환산액</th><td><b>🔒 (비공개)</b></td><th>현재재고 / 재고금액</th><td><b>{current_stock:,} 개 / 🔒 (비공개)</b></td></tr>
-                    <tr><th>비고</th><td colspan="3">{clean_val(item.get('remark'))}</td></tr>
-                </table>
-                """
-            else:
-                html_table = f"""
-                <table class="info-table">
-                    <tr><th>품목코드</th><td><code>{clean_val(item.get('item_code'))}</code></td><th>품명</th><td><b>{clean_val(item.get('item_name'))}</b></td></tr>
-                    <tr><th>상세번호</th><td>{clean_val(item.get('item_detail_no'))}</td><th>규격/모델</th><td>{clean_val(item.get('model_spec'))}</td></tr>
-                    <tr><th>구분</th><td>{clean_val(item.get('category_type'))}</td><th>분류체계</th><td>{category_full}</td></tr>
-                    <tr><th>설치구역/기기</th><td>{clean_val(item.get('zone'))} / {clean_val(item.get('device_name'))}</td><th>Maker</th><td>{clean_val(item.get('maker'))}</td></tr>
-                    <tr><th>화폐단위/단가</th><td>{curr} / {representative_price:,.2f}</td><th>적용 환율({representative_year}년)</th><td>{representative_rate:,.2f} 원</td></tr>
-                    <tr><th>원화환산액</th><td><b>{unit_krw_display:,} 원</b> (최신단가적용)</td><th>현재재고 / 재고금액</th><td><b>{current_stock:,} 개 / {total_val_krw:,} 원</b></td></tr>
-                    <tr><th>비고</th><td colspan="3">{clean_val(item.get('remark'))}</td></tr>
-                </table>
-                """
-            st.markdown(html_table, unsafe_allow_html=True)
+            st.markdown(info_table_html, unsafe_allow_html=True)
 
         st.markdown("---")
 
@@ -403,20 +448,12 @@ def render_a4_spec_card(item_code, is_guest_user=False):
             """, unsafe_allow_html=True)
             st.markdown("---")
         
-        if is_guest_user:
-            st.markdown(f"""
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
-                <h3 style="margin: 0; font-size: 18px;">📥 1. 입고 내역 <span style="font-size: 14px; color: #33691e; font-weight: bold;">({period_badge_text})</span></h3>
-                <span style="font-weight: bold; color: #1B5E20; font-size: 14px;">합계 수량: {total_in_qty:,} 개 &nbsp;|&nbsp; 총 금액: 🔒 (비공개)</span>
-            </div>
-            """, unsafe_allow_html=True)
-        else:
-            st.markdown(f"""
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
-                <h3 style="margin: 0; font-size: 18px;">📥 1. 입고 내역 <span style="font-size: 14px; color: #33691e; font-weight: bold;">({period_badge_text})</span></h3>
-                <span style="font-weight: bold; color: #1B5E20; font-size: 14px;">합계 수량: {total_in_qty:,} 개 &nbsp;|&nbsp; 총 금액: {total_in_amt:,} 원</span>
-            </div>
-            """, unsafe_allow_html=True)
+        st.markdown(f"""
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+            <h3 style="margin: 0; font-size: 18px;">📥 1. 입고 내역 <span style="font-size: 14px; color: #33691e; font-weight: bold;">({period_badge_text})</span></h3>
+            <span style="font-weight: bold; color: #1B5E20; font-size: 14px;">합계 수량: {total_in_qty:,} 개 &nbsp;|&nbsp; 총 금액: {in_amt_str}</span>
+        </div>
+        """, unsafe_allow_html=True)
 
         if in_rows:
             in_table_html = "<div class='table-scroll-container'><table class='trans-table'><thead><tr style='background-color: #f8f9fa;'><th>No</th><th>일자</th><th>구분</th><th>수량</th><th>원화환산액</th><th>총금액</th><th>담당자</th><th>요청자</th><th>비고</th></tr></thead><tbody>"
@@ -429,20 +466,12 @@ def render_a4_spec_card(item_code, is_guest_user=False):
 
         st.markdown("---")
 
-        if is_guest_user:
-            st.markdown(f"""
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
-                <h3 style="margin: 0; font-size: 18px;">📤 2. 출고 내역 <span style="font-size: 14px; color: #33691e; font-weight: bold;">({period_badge_text})</span></h3>
-                <span style="font-weight: bold; color: #B71C1C; font-size: 14px;">합계 수량: {total_out_qty:,} 개 &nbsp;|&nbsp; 총 금액: 🔒 (비공개)</span>
-            </div>
-            """, unsafe_allow_html=True)
-        else:
-            st.markdown(f"""
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
-                <h3 style="margin: 0; font-size: 18px;">📤 2. 출고 내역 <span style="font-size: 14px; color: #33691e; font-weight: bold;">({period_badge_text})</span></h3>
-                <span style="font-weight: bold; color: #B71C1C; font-size: 14px;">합계 수량: {total_out_qty:,} 개 &nbsp;|&nbsp; 총 금액: {total_out_amt:,} 원</span>
-            </div>
-            """, unsafe_allow_html=True)
+        st.markdown(f"""
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+            <h3 style="margin: 0; font-size: 18px;">📤 2. 출고 내역 <span style="font-size: 14px; color: #33691e; font-weight: bold;">({period_badge_text})</span></h3>
+            <span style="font-weight: bold; color: #B71C1C; font-size: 14px;">합계 수량: {total_out_qty:,} 개 &nbsp;|&nbsp; 총 금액: {out_amt_str}</span>
+        </div>
+        """, unsafe_allow_html=True)
 
         if out_rows:
             out_table_html = "<div class='table-scroll-container'><table class='trans-table'><thead><tr style='background-color: #f8f9fa;'><th>No</th><th>일자</th><th>구분</th><th>수량</th><th>원화환산액</th><th>총금액</th><th>담당자</th><th>요청자</th><th>비고</th></tr></thead><tbody>"
@@ -577,7 +606,7 @@ else:
 menu = st.sidebar.radio("메뉴 이동:", menu_list)
 
 # ---------------------------------------------------------
-# 메뉴 1: 재고 현황판 (자재품목명세서 출력 및 인쇄 버튼 포함)
+# 메뉴 1: 재고 현황판
 # ---------------------------------------------------------
 if menu == MENU_STOCK:
     st.subheader("📊 현재 품목별/Lot별 재고 현황판 (초기재고 0개 포함)")
