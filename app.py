@@ -136,18 +136,29 @@ def render_a4_spec_card(item_code, is_guest_user=False):
     trans_data = trans_resp.data or []
     
     st.markdown("""
-    <div style="background-color: #f1f8e9; border: 1px solid #c5e1a5; padding: 12px 18px; border-radius: 8px; margin-bottom: 15px;">
-        <span style="font-size: 15px; font-weight: bold; color: #33691e;">📅 자재품목명세서 입출고 기간 필터 선택</span>
+    <div style="background-color: #f1f8e9; border: 1px solid #c5e1a5; padding: 12px 18px; border-radius: 8px; margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center;">
+        <span style="font-size: 15px; font-weight: bold; color: #33691e;">📅 자재품목명세서 입출고 기간 필터 선택 및 인쇄</span>
     </div>
     """, unsafe_allow_html=True)
 
-    spec_period_opt = st.radio(
+    col_pr1, col_pr2 = st.columns([3, 1])
+    spec_period_opt = col_pr1.radio(
         "조회 기간 선택",
         ["전체", "3개월", "6개월", "1년", "기간설정"],
         index=0,
         horizontal=True,
         key=f"spec_period_radio_{item_code}"
     )
+
+    # 프린트 버튼 컴포넌트 추가
+    with col_pr2:
+        st.write("")
+        if st.button("🖨️ 명세서 프린트 (인쇄)", key=f"print_btn_{item_code}", use_container_width=True, type="primary"):
+            components.html("""
+                <script>
+                    window.parent.print();
+                </script>
+            """, height=0)
 
     today_dt = datetime.date.today()
     if spec_period_opt == "3개월":
@@ -332,6 +343,13 @@ def render_a4_spec_card(item_code, is_guest_user=False):
     .trans-table th { background-color: #f8f9fa; font-weight: bold; }
     .stock-calc-banner { background-color: #E3F2FD; border: 2px solid #2196F3; border-radius: 8px; padding: 15px; text-align: center; font-size: 16px; font-weight: bold; color: #0D47A1; margin: 20px 0; }
     .table-scroll-container { max-height: 380px; overflow-y: auto; border: 1px solid #ccc; margin-bottom: 15px; }
+    
+    @media print {
+        body * { visibility: hidden; }
+        .a4-card, .a4-card * { visibility: visible; }
+        .a4-card { position: absolute; left: 0; top: 0; width: 100%; border: none; padding: 0; }
+        header, footer, nav, .stSidebar { display: none !important; }
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -559,7 +577,7 @@ else:
 menu = st.sidebar.radio("메뉴 이동:", menu_list)
 
 # ---------------------------------------------------------
-# 메뉴 1: 재고 현황판 (자재품목명세서 출력 기능 포함)
+# 메뉴 1: 재고 현황판 (자재품목명세서 출력 및 인쇄 버튼 포함)
 # ---------------------------------------------------------
 if menu == MENU_STOCK:
     st.subheader("📊 현재 품목별/Lot별 재고 현황판 (초기재고 0개 포함)")
@@ -1285,7 +1303,7 @@ elif menu == MENU_ITEMS:
                         st.error(f"❌ 삭제 실패: {e}")
 
 # ---------------------------------------------------------
-# 메뉴 4: 품목별 입출고 집계 및 이력 조회 (출고 1개 이상 리스트업 및 선택품목 개별시트 엑셀 다운로드 유지)
+# 메뉴 4: 품목별 입출고 집계 및 이력 조회 (기존 유지)
 # ---------------------------------------------------------
 elif menu == MENU_HISTORY:
     st.subheader("🔍 품목별 입출고 집계 및 소진 추이 조회")
