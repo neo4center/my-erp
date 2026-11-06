@@ -1285,11 +1285,11 @@ elif menu == MENU_ITEMS:
                         st.error(f"❌ 삭제 실패: {e}")
 
 # ---------------------------------------------------------
-# 메뉴 4: 품목별 입출고 집계 및 이력 조회 (게스트 및 정식직원 공통 필터 버그 수정 반영)
+# 메뉴 4: 품목별 입출고 집계 및 이력 조회 (출고수량 1개 이상 품목 리스트업 및 엑셀 다운로드 복원 완료)
 # ---------------------------------------------------------
 elif menu == MENU_HISTORY:
     st.subheader("🔍 품목별 입출고 집계 및 소진 추이 조회")
-    st.caption("💡 품목별로 총 입고량, 총 출고량, 현재 재고 수량 및 세부 입출고 이력을 요약하여 보여줍니다.")
+    st.caption("💡 조회 기간 동안 출고 수량이 1개 이상인 품목들의 입출고 집계 요약 및 상세 이력을 조회합니다.")
 
     today_date = datetime.date.today()
     period_option = st.radio(
@@ -1455,6 +1455,10 @@ elif menu == MENU_HISTORY:
 
         summary_rows = []
         for icode, data in item_summary_map.items():
+            # [수정] 모든 계정(게스트, 일반, 관리자 공통)에서 조회 기간 동안 출고 수량이 1개 이상인 품목만 요약 리스트에 포함
+            if data["총 출고수량"] < 1:
+                continue
+
             summary_rows.append({
                 "품목코드": data["품목코드"],
                 "품명": data["품명"],
@@ -1466,161 +1470,178 @@ elif menu == MENU_HISTORY:
                 "재고금액": "🔒 (비공개)" if is_guest else data["재고금액"]
             })
 
-        df_summary = pd.DataFrame(summary_rows)
+        if summary_rows:
+            df_summary = pd.DataFrame(summary_rows)
 
-        st.markdown("### 📦 품목별 입출고 집계 요약")
-        st.markdown("---")
+            st.markdown("### 📦 품목별 입출고 집계 요약 (출고 1개 이상 품목)")
+            st.markdown("---")
 
-        df_summary_display = df_summary.copy()
-        df_summary_display["총재고"] = df_summary_display["총재고"].apply(lambda x: f"{x:,} 개")
-        df_summary_display["총 입고수량"] = df_summary_display["총 입고수량"].apply(lambda x: f"{x:,} 개")
-        df_summary_display["총 출고수량"] = df_summary_display["총 출고수량"].apply(lambda x: f"{x:,} 개")
-        df_summary_display["현재재고_raw"] = df_summary_display["현재재고"]
-        df_summary_display["현재재고"] = df_summary_display["현재재고"].apply(lambda x: f"{x:,} 개")
-        if not is_guest:
-            df_summary_display["재고금액"] = df_summary_display["재고금액"].apply(lambda x: f"{x:,.0f} 원")
-
-        styled_df = df_summary_display.drop(columns=["현재재고_raw"]).style
-
-        def color_zero_stock(val):
-            if str(val).strip() == "0 개":
-                return 'color: #D32F2F; font-weight: bold;'
-            return ''
-
-        styled_df = styled_df.map(color_zero_stock, subset=["현재재고"])
-
-        summary_selection = st.dataframe(
-            styled_df,
-            column_config={
-                "품목코드": st.column_config.TextColumn("품목코드", width="small"),
-                "품명": st.column_config.TextColumn("품명", width="medium"),
-                "규격_모델": st.column_config.TextColumn("규격_모델", width="medium"),
-                "총재고": st.column_config.TextColumn("총재고", width="small"),
-                "총 입고수량": st.column_config.TextColumn("총 입고수량", width="small"),
-                "총 출고수량": st.column_config.TextColumn("총 출고수량", width="small"),
-                "현재재고": st.column_config.TextColumn("현재재고", width="small"),
-                "재고금액": st.column_config.TextColumn("재고금액", width="medium")
-            },
-            use_container_width=True,
-            hide_index=True,
-            on_select="rerun",
-            selection_mode="multi-row"
-        )
-
-        sel_rows = summary_selection.selection.rows if summary_selection and hasattr(summary_selection, "selection") else []
-
-        selected_icodes = []
-        if sel_rows:
-            for r_idx in sel_rows:
-                if r_idx < len(df_summary):
-                    selected_icodes.append(df_summary.iloc[r_idx]["품목코드"])
-        else:
-            if not df_summary.empty:
-                selected_icodes.append(df_summary.iloc[0]["품목코드"])
-
-        st.markdown("---")
-        st.markdown("### 📋 선택품목 상세 입출고 이력")
-
-        for target_icode in selected_icodes:
-            target_summary = item_summary_map.get(str(target_icode).strip().upper(), None)
-            info = item_info_map.get(str(target_icode).strip().upper(), {})
-            photo_url = info.get("photo_url")
-
-            st.markdown(f"#### 🔍 품목코드: `{target_icode}`")
+            # 엑셀 다운로드 버튼 추가
+            out_summary_excel = io.BytesIO()
+            with pd.ExcelWriter(out_summary_excel, engine="openpyxl") as writer:
+                df_summary.to_excel(writer, index=False, sheet_name="입출고집계요약")
             
-            c_img, c_desc = st.columns([1, 4])
-            with c_img:
-                if photo_url:
-                    st.image(photo_url, caption=target_summary['품명'] if target_summary else target_icode, use_container_width=True)
-                else:
-                    st.info("등록된 사진 없음")
+            col_dl1, _ = st.columns([1, 3])
+            with col_dl1:
+                st.download_button(
+                    label="📥 집계 요약 엑셀 다운로드 (.xlsx)",
+                    data=out_summary_excel.getvalue(),
+                    file_name=f"입출고집계요약_{start_date_filter}~{end_date_filter}.xlsx",
+                    use_container_width=True
+                )
 
-            with c_desc:
-                if target_summary and target_summary["상세내역"]:
-                    sorted_details = sorted(target_summary["상세내역"], key=lambda x: str(x.get("trans_date", "")), reverse=False)
+            df_summary_display = df_summary.copy()
+            df_summary_display["총재고"] = df_summary_display["총재고"].apply(lambda x: f"{x:,} 개")
+            df_summary_display["총 입고수량"] = df_summary_display["총 입고수량"].apply(lambda x: f"{x:,} 개")
+            df_summary_display["총 출고수량"] = df_summary_display["총 출고수량"].apply(lambda x: f"{x:,} 개")
+            df_summary_display["현재재고_raw"] = df_summary_display["현재재고"]
+            df_summary_display["현재재고"] = df_summary_display["현재재고"].apply(lambda x: f"{x:,} 개")
+            if not is_guest:
+                df_summary_display["재고금액"] = df_summary_display["재고금액"].apply(lambda x: f"{x:,.0f} 원")
 
-                    detail_rows = []
+            styled_df = df_summary_display.drop(columns=["현재재고_raw"]).style
 
-                    for idx, t in enumerate(sorted_details, 1):
-                        qty = safe_int_clean(t.get("quantity"), 0)
-                        t_date = clean_date(t.get("trans_date", ""))
-                        t_type = str(t.get("trans_type", "")).strip().upper()
-                        
-                        type_display = "입고 (IN)" if t_type in ["IN", "입고"] else "출고 (OUT)"
+            def color_zero_stock(val):
+                if str(val).strip() == "0 개":
+                    return 'color: #D32F2F; font-weight: bold;'
+                return ''
 
-                        raw_mgr = safe_str_clean(t.get("manager"), "")
-                        if not raw_mgr or raw_mgr == "-":
-                            raw_mgr = "최광호"
-                        else:
-                            for pos in POSITIONS:
-                                raw_mgr = raw_mgr.replace(pos, "").strip()
+            styled_df = styled_df.map(color_zero_stock, subset=["현재재고"])
 
-                        raw_req = safe_str_clean(t.get("requester"), "-")
-                        if raw_req in ["-", "초기재고일괄등록", "시스템입고", "None", ""]:
-                            raw_req = "기초재고등록" if t_type in ["IN", "입고"] else "-"
+            summary_selection = st.dataframe(
+                styled_df,
+                column_config={
+                    "품목코드": st.column_config.TextColumn("품목코드", width="small"),
+                    "품명": st.column_config.TextColumn("품명", width="medium"),
+                    "규격_모델": st.column_config.TextColumn("규격_모델", width="medium"),
+                    "총재고": st.column_config.TextColumn("총재고", width="small"),
+                    "총 입고수량": st.column_config.TextColumn("총 입고수량", width="small"),
+                    "총 출고수량": st.column_config.TextColumn("총 출고수량", width="small"),
+                    "현재재고": st.column_config.TextColumn("현재재고", width="small"),
+                    "재고금액": st.column_config.TextColumn("재고금액", width="medium")
+                },
+                use_container_width=True,
+                hide_index=True,
+                on_select="rerun",
+                selection_mode="multi-row"
+            )
+
+            sel_rows = summary_selection.selection.rows if summary_selection and hasattr(summary_selection, "selection") else []
+
+            selected_icodes = []
+            if sel_rows:
+                for r_idx in sel_rows:
+                    if r_idx < len(df_summary):
+                        selected_icodes.append(df_summary.iloc[r_idx]["품목코드"])
+            else:
+                if not df_summary.empty:
+                    selected_icodes.append(df_summary.iloc[0]["품목코드"])
+
+            st.markdown("---")
+            st.markdown("### 📋 선택품목 상세 입출고 이력")
+
+            for target_icode in selected_icodes:
+                target_summary = item_summary_map.get(str(target_icode).strip().upper(), None)
+                info = item_info_map.get(str(target_icode).strip().upper(), {})
+                photo_url = info.get("photo_url")
+
+                st.markdown(f"#### 🔍 품목코드: `{target_icode}`")
+                
+                c_img, c_desc = st.columns([1, 4])
+                with c_img:
+                    if photo_url:
+                        st.image(photo_url, caption=target_summary['품명'] if target_summary else target_icode, use_container_width=True)
+                    else:
+                        st.info("등록된 사진 없음")
+
+                with c_desc:
+                    if target_summary and target_summary["상세내역"]:
+                        sorted_details = sorted(target_summary["상세내역"], key=lambda x: str(x.get("trans_date", "")), reverse=False)
+
+                        detail_rows = []
+
+                        for idx, t in enumerate(sorted_details, 1):
+                            qty = safe_int_clean(t.get("quantity"), 0)
+                            t_date = clean_date(t.get("trans_date", ""))
+                            t_type = str(t.get("trans_type", "")).strip().upper()
+                            
+                            type_display = "입고 (IN)" if t_type in ["IN", "입고"] else "출고 (OUT)"
+
+                            raw_mgr = safe_str_clean(t.get("manager"), "")
+                            if not raw_mgr or raw_mgr == "-":
+                                raw_mgr = "최광호"
+                            else:
+                                for pos in POSITIONS:
+                                    raw_mgr = raw_mgr.replace(pos, "").strip()
+
+                            raw_req = safe_str_clean(t.get("requester"), "-")
+                            if raw_req in ["-", "초기재고일괄등록", "시스템입고", "None", ""]:
+                                raw_req = "기초재고등록" if t_type in ["IN", "입고"] else "-"
+
+                            if is_guest:
+                                detail_rows.append({
+                                    "No": idx, "일자": t_date, "구분": type_display,
+                                    "수량": f"{qty:,} 개", "원화환산액": "🔒 (비공개)", "총금액": "🔒 (비공개)",
+                                    "담당자": raw_mgr, "요청자": raw_req, "비고": safe_str_clean(t.get("remark"), "-")
+                                })
+                            else:
+                                detail_rows.append({
+                                    "No": idx, "일자": t_date, "구분": type_display,
+                                    "수량": f"{qty:,} 개", "원화환산액": "표시", "총금액": "표시",
+                                    "담당자": raw_mgr, "요청자": raw_req, "비고": safe_str_clean(t.get("remark"), "-")
+                                })
 
                         if is_guest:
-                            detail_rows.append({
-                                "No": idx, "일자": t_date, "구분": type_display,
-                                "수량": f"{qty:,} 개", "원화환산액": "🔒 (비공개)", "총금액": "🔒 (비공개)",
-                                "담당자": raw_mgr, "요청자": raw_req, "비고": safe_str_clean(t.get("remark"), "-")
-                            })
-                        else:
-                            detail_rows.append({
-                                "No": idx, "일자": t_date, "구분": type_display,
-                                "수량": f"{qty:,} 개", "원화환산액": "표시", "총금액": "표시",
-                                "담당자": raw_mgr, "요청자": raw_req, "비고": safe_str_clean(t.get("remark"), "-")
-                            })
-
-                    if is_guest:
-                        summary_html = f"""
-                        <div style="background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 6px; padding: 12px 20px; margin-bottom: 12px; font-size: 15px; color: #111;">
-                            <div><b>품명:</b> <span style="color: #2e7d32; font-weight: bold;">{target_summary['품명']}</span> (규격: {target_summary['규격_모델']})</div>
-                            <div style="margin-top: 8px;">
-                                📦 <b>현재재고:</b> <span style="color: #1976D2; font-weight: bold;">{target_summary['현재재고']:,} 개</span> &nbsp;|&nbsp; 💵 <b>재고금액:</b> <span style="color: #D32F2F; font-weight: bold;">🔒 (비공개)</span>
+                            summary_html = f"""
+                            <div style="background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 6px; padding: 12px 20px; margin-bottom: 12px; font-size: 15px; color: #111;">
+                                <div><b>품명:</b> <span style="color: #2e7d32; font-weight: bold;">{target_summary['품명']}</span> (규격: {target_summary['규격_모델']})</div>
+                                <div style="margin-top: 8px;">
+                                    📦 <b>현재재고:</b> <span style="color: #1976D2; font-weight: bold;">{target_summary['현재재고']:,} 개</span> &nbsp;|&nbsp; 💵 <b>재고금액:</b> <span style="color: #D32F2F; font-weight: bold;">🔒 (비공개)</span>
+                                </div>
                             </div>
-                        </div>
-                        """
+                            """
+                        else:
+                            summary_html = f"""
+                            <div style="background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 6px; padding: 12px 20px; margin-bottom: 12px; font-size: 15px; color: #111;">
+                                <div><b>품명:</b> <span style="color: #2e7d32; font-weight: bold;">{target_summary['품명']}</span> (규격: {target_summary['규격_모델']})</div>
+                            </div>
+                            """
+                        st.markdown(summary_html, unsafe_allow_html=True)
+
+                        df_detail = pd.DataFrame(detail_rows)
+
+                        def highlight_trans_type(row):
+                            val = str(row.get("구분", ""))
+                            if "입고" in val or "IN" in val:
+                                return ['background-color: #E8F5E9; color: #1B5E20; font-weight: bold;'] * len(row)
+                            elif "출고" in val or "OUT" in val:
+                                return ['background-color: #FFEBEE; color: #B71C1C; font-weight: bold;'] * len(row)
+                            return [''] * len(row)
+
+                        styled_detail_df = df_detail.style.apply(highlight_trans_type, axis=1)
+
+                        st.dataframe(
+                            styled_detail_df,
+                            column_config={
+                                "No": st.column_config.NumberColumn("No", width="small", format="%d"),
+                                "일자": st.column_config.TextColumn("일자", width="small"),
+                                "구분": st.column_config.TextColumn("구분", width="small"),
+                                "수량": st.column_config.TextColumn("수량", width="small"),
+                                "원화환산액": st.column_config.TextColumn("원화환산액", width="small"),
+                                "총금액": st.column_config.TextColumn("총금액", width="small"),
+                                "담당자": st.column_config.TextColumn("담당자", width="small"),
+                                "요청자": st.column_config.TextColumn("요청자", width="small"),
+                                "비고": st.column_config.TextColumn("비고", width="medium")
+                            },
+                            use_container_width=True,
+                            hide_index=True
+                        )
                     else:
-                        summary_html = f"""
-                        <div style="background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 6px; padding: 12px 20px; margin-bottom: 12px; font-size: 15px; color: #111;">
-                            <div><b>품명:</b> <span style="color: #2e7d32; font-weight: bold;">{target_summary['품명']}</span> (규격: {target_summary['규격_모델']})</div>
-                        </div>
-                        """
-                    st.markdown(summary_html, unsafe_allow_html=True)
-
-                    df_detail = pd.DataFrame(detail_rows)
-
-                    def highlight_trans_type(row):
-                        val = str(row.get("구분", ""))
-                        if "입고" in val or "IN" in val:
-                            return ['background-color: #E8F5E9; color: #1B5E20; font-weight: bold;'] * len(row)
-                        elif "출고" in val or "OUT" in val:
-                            return ['background-color: #FFEBEE; color: #B71C1C; font-weight: bold;'] * len(row)
-                        return [''] * len(row)
-
-                    styled_detail_df = df_detail.style.apply(highlight_trans_type, axis=1)
-
-                    st.dataframe(
-                        styled_detail_df,
-                        column_config={
-                            "No": st.column_config.NumberColumn("No", width="small", format="%d"),
-                            "일자": st.column_config.TextColumn("일자", width="small"),
-                            "구분": st.column_config.TextColumn("구분", width="small"),
-                            "수량": st.column_config.TextColumn("수량", width="small"),
-                            "원화환산액": st.column_config.TextColumn("원화환산액", width="small"),
-                            "총금액": st.column_config.TextColumn("총금액", width="small"),
-                            "담당자": st.column_config.TextColumn("담당자", width="small"),
-                            "요청자": st.column_config.TextColumn("요청자", width="small"),
-                            "비고": st.column_config.TextColumn("비고", width="medium")
-                        },
-                        use_container_width=True,
-                        hide_index=True
-                    )
-                else:
-                    st.info("선택한 품목에 대한 해당 기간 내 세부 입출고 이력이 없습니다.")
-            
-            st.markdown("---")
+                        st.info("선택한 품목에 대한 해당 기간 내 세부 입출고 이력이 없습니다.")
+                
+                st.markdown("---")
+        else:
+            st.info("선택한 기간 내 출고 수량이 1개 이상인 품목이 없습니다.")
     else:
         st.info("조건에 일치하는 내역이 없습니다.")
 
