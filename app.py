@@ -559,7 +559,7 @@ else:
 menu = st.sidebar.radio("메뉴 이동:", menu_list)
 
 # ---------------------------------------------------------
-# 메뉴 1: 재고 현황판
+# 메뉴 1: 재고 현황판 (자재품목명세서 출력 기능 포함)
 # ---------------------------------------------------------
 if menu == MENU_STOCK:
     st.subheader("📊 현재 품목별/Lot별 재고 현황판 (초기재고 0개 포함)")
@@ -1285,7 +1285,7 @@ elif menu == MENU_ITEMS:
                         st.error(f"❌ 삭제 실패: {e}")
 
 # ---------------------------------------------------------
-# 메뉴 4: 품목별 입출고 집계 및 이력 조회 (출고 1개 이상 리스트업 및 선택품목 개별시트 엑셀 다운로드)
+# 메뉴 4: 품목별 입출고 집계 및 이력 조회 (출고 1개 이상 리스트업 및 선택품목 개별시트 엑셀 다운로드 유지)
 # ---------------------------------------------------------
 elif menu == MENU_HISTORY:
     st.subheader("🔍 품목별 입출고 집계 및 소진 추이 조회")
@@ -1455,7 +1455,6 @@ elif menu == MENU_HISTORY:
 
         summary_rows = []
         for icode, data in item_summary_map.items():
-            # 조회 기간 동안 출고 수량이 1개 이상인 품목만 집계 요약에 리스트업 (게스트/일반/관리자 공통)
             if data["총 출고수량"] < 1:
                 continue
 
@@ -1523,16 +1522,11 @@ elif menu == MENU_HISTORY:
                 if not df_summary.empty:
                     selected_icodes.append(df_summary.iloc[0]["품목코드"])
 
-            # -----------------------------------------------------------------
-            # [추가] 체크박스(다중 선택)된 품목들의 상세 이력을 각각 개별 시트로 생성하여 엑셀 다운로드
-            # -----------------------------------------------------------------
             if sel_rows:
                 out_multi_excel = io.BytesIO()
                 with pd.ExcelWriter(out_multi_excel, engine="openpyxl") as writer:
-                    # 첫 번째 시트: 집계 요약
                     df_summary.to_excel(writer, index=False, sheet_name="입출고집계요약")
                     
-                    # 선택된 각 품목별 상세 이력 시트 추가
                     for s_icode in selected_icodes:
                         s_summary = item_summary_map.get(str(s_icode).strip().upper(), None)
                         if s_summary and s_summary["상세내역"]:
@@ -1565,7 +1559,6 @@ elif menu == MENU_HISTORY:
                                     "비고": safe_str_clean(t.get("remark"), "-")
                                 })
                             df_s_detail = pd.DataFrame(s_rows)
-                            # 엑셀 시트 이름은 31글자 제한 및 특수문자 방지 처리
                             safe_sheet_name = re.sub(r'[:\\/?*\[\]]', '', str(s_icode))[:31]
                             df_s_detail.to_excel(writer, index=False, sheet_name=safe_sheet_name)
 
