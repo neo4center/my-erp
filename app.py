@@ -1285,7 +1285,7 @@ elif menu == MENU_ITEMS:
                         st.error(f"❌ 삭제 실패: {e}")
 
 # ---------------------------------------------------------
-# 메뉴 4: 품목별 입출고 집계 및 이력 조회 (출고수량 1개 이상 품목 리스트업 및 엑셀 다운로드 복원 완료)
+# 메뉴 4: 품목별 입출고 집계 및 이력 조회 (출고 1개 이상 리스트업 및 선택품목 개별시트 엑셀 다운로드)
 # ---------------------------------------------------------
 elif menu == MENU_HISTORY:
     st.subheader("🔍 품목별 입출고 집계 및 소진 추이 조회")
@@ -1455,7 +1455,7 @@ elif menu == MENU_HISTORY:
 
         summary_rows = []
         for icode, data in item_summary_map.items():
-            # [수정] 모든 계정(게스트, 일반, 관리자 공통)에서 조회 기간 동안 출고 수량이 1개 이상인 품목만 요약 리스트에 포함
+            # 조회 기간 동안 출고 수량이 1개 이상인 품목만 집계 요약에 리스트업 (게스트/일반/관리자 공통)
             if data["총 출고수량"] < 1:
                 continue
 
@@ -1475,20 +1475,6 @@ elif menu == MENU_HISTORY:
 
             st.markdown("### 📦 품목별 입출고 집계 요약 (출고 1개 이상 품목)")
             st.markdown("---")
-
-            # 엑셀 다운로드 버튼 추가
-            out_summary_excel = io.BytesIO()
-            with pd.ExcelWriter(out_summary_excel, engine="openpyxl") as writer:
-                df_summary.to_excel(writer, index=False, sheet_name="입출고집계요약")
-            
-            col_dl1, _ = st.columns([1, 3])
-            with col_dl1:
-                st.download_button(
-                    label="📥 집계 요약 엑셀 다운로드 (.xlsx)",
-                    data=out_summary_excel.getvalue(),
-                    file_name=f"입출고집계요약_{start_date_filter}~{end_date_filter}.xlsx",
-                    use_container_width=True
-                )
 
             df_summary_display = df_summary.copy()
             df_summary_display["총재고"] = df_summary_display["총재고"].apply(lambda x: f"{x:,} 개")
@@ -1536,6 +1522,62 @@ elif menu == MENU_HISTORY:
             else:
                 if not df_summary.empty:
                     selected_icodes.append(df_summary.iloc[0]["품목코드"])
+
+            # -----------------------------------------------------------------
+            # [추가] 체크박스(다중 선택)된 품목들의 상세 이력을 각각 개별 시트로 생성하여 엑셀 다운로드
+            # -----------------------------------------------------------------
+            if sel_rows:
+                out_multi_excel = io.BytesIO()
+                with pd.ExcelWriter(out_multi_excel, engine="openpyxl") as writer:
+                    # 첫 번째 시트: 집계 요약
+                    df_summary.to_excel(writer, index=False, sheet_name="입출고집계요약")
+                    
+                    # 선택된 각 품목별 상세 이력 시트 추가
+                    for s_icode in selected_icodes:
+                        s_summary = item_summary_map.get(str(s_icode).strip().upper(), None)
+                        if s_summary and s_summary["상세내역"]:
+                            s_sorted = sorted(s_summary["상세내역"], key=lambda x: str(x.get("trans_date", "")), reverse=False)
+                            s_rows = []
+                            for idx, t in enumerate(s_sorted, 1):
+                                q = safe_int_clean(t.get("quantity"), 0)
+                                t_date = clean_date(t.get("trans_date", ""))
+                                t_type = str(t.get("trans_type", "")).strip().upper()
+                                type_disp = "입고 (IN)" if t_type in ["IN", "입고"] else "출고 (OUT)"
+                                
+                                raw_mgr = safe_str_clean(t.get("manager"), "")
+                                if not raw_mgr or raw_mgr == "-":
+                                    raw_mgr = "최광호"
+                                else:
+                                    for pos in POSITIONS:
+                                        raw_mgr = raw_mgr.replace(pos, "").strip()
+
+                                raw_req = safe_str_clean(t.get("requester"), "-")
+                                if raw_req in ["-", "초기재고일괄등록", "시스템입고", "None", ""]:
+                                    raw_req = "기초재고등록" if t_type in ["IN", "입고"] else "-"
+
+                                s_rows.append({
+                                    "No": idx,
+                                    "일자": t_date,
+                                    "구분": type_disp,
+                                    "수량": q,
+                                    "담당자": raw_mgr,
+                                    "요청자": raw_req,
+                                    "비고": safe_str_clean(t.get("remark"), "-")
+                                })
+                            df_s_detail = pd.DataFrame(s_rows)
+                            # 엑셀 시트 이름은 31글자 제한 및 특수문자 방지 처리
+                            safe_sheet_name = re.sub(r'[:\\/?*\[\]]', '', str(s_icode))[:31]
+                            df_s_detail.to_excel(writer, index=False, sheet_name=safe_sheet_name)
+
+                st.write("")
+                col_btn_dl, _ = st.columns([1, 3])
+                with col_btn_dl:
+                    st.download_button(
+                        label="📥 선택한 품목별 상세이력 엑셀 다운로드 (개별 시트)",
+                        data=out_multi_excel.getvalue(),
+                        file_name=f"선택품목_입출고상세이력_{datetime.date.today()}.xlsx",
+                        use_container_width=True
+                    )
 
             st.markdown("---")
             st.markdown("### 📋 선택품목 상세 입출고 이력")
