@@ -1540,16 +1540,12 @@ elif menu == MENU_HISTORY:
                     sorted_details = sorted(target_summary["상세내역"], key=lambda x: str(x.get("trans_date", "")), reverse=False)
 
                     detail_rows = []
-                    calc_sub_out_qty = 0
 
                     for idx, t in enumerate(sorted_details, 1):
                         qty = safe_int_clean(t.get("quantity"), 0)
                         t_date = clean_date(t.get("trans_date", ""))
                         t_type = str(t.get("trans_type", "")).strip().upper()
                         
-                        if t_type in ["OUT", "출고"]:
-                            calc_sub_out_qty += qty
-
                         type_display = "입고 (IN)" if t_type in ["IN", "입고"] else "출고 (OUT)"
 
                         raw_mgr = safe_str_clean(t.get("manager"), "")
