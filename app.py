@@ -342,7 +342,6 @@ def render_a4_spec_card(item_code, is_guest_user=False):
 
     photo_url = item.get("photo_url")
 
-    # 테이블 및 명세서 HTML 문자열 조립
     in_table_html_str = ""
     if in_rows:
         in_table_html_str = "<table class='trans-table'><thead><tr style='background-color: #f8f9fa;'><th>No</th><th>일자</th><th>구분</th><th>수량</th><th>원화환산액</th><th>총금액</th><th>담당자</th><th>요청자</th><th>비고</th></tr></thead><tbody>"
@@ -401,7 +400,6 @@ def render_a4_spec_card(item_code, is_guest_user=False):
     </div>
     """
 
-    # 100% 확실하게 백지 현상을 차단하는 독립 윈도우 인쇄 스크립트 결합
     if print_clicked:
         escaped_html = card_html_content.replace('"', '\\"').replace('\n', ' ')
         components.html(f"""
@@ -847,7 +845,54 @@ if menu == MENU_STOCK:
         except Exception:
             full_excel_items = all_items
 
-        total_all_asset_amt = 0
+        # 전체 입고 금액 및 출고 금액 계산 로직 추가
+        total_all_in_amt = 0
+        total_all_out_amt = 0
+        try:
+            full_trans_resp = []
+            chunk_size = 1000
+            start = 0
+            while True:
+                resp = db.supabase.table("stock_transactions").select("item_code, trans_type, quantity, unit_price, trans_date").order("id", desc=False).range(start, start + chunk_size - 1).execute()
+                c_data = resp.data or []
+                full_trans_resp.extend(c_data)
+                if len(c_data) < chunk_size:
+                    break
+                start += chunk_size
+
+            # 아이템별 최신 단가 및 환율 맵핑용 사전 준비
+            item_info_master_map = {}
+            for itm in full_excel_items:
+                ic = itm.get("item_code")
+                item_info_master_map[ic] = {
+                    "currency": safe_str_clean(itm.get("currency"), "KRW"),
+                    "base_price": safe_float(itm.get("unit_price"), 0.0),
+                    "base_date": clean_date(itm.get("in_date", str(datetime.date.today())))
+                }
+
+            # 트랜잭션을 순회하며 전체 입고 자산 금액과 출고 자산 금액 합산
+            for t in full_trans_resp:
+                ic = t.get("item_code")
+                if not ic or ic not in item_info_master_map:
+                    continue
+                info = item_info_master_map[ic]
+                q = safe_int_clean(t.get("quantity"), 0)
+                ttype = str(t.get("trans_type", "")).strip().upper()
+                t_price = safe_float(t.get("unit_price"), info["base_price"])
+                t_date = clean_date(t.get("trans_date", ""))
+                t_year = get_year_from_date(t_date)
+                t_rate = get_exchange_rate_by_year(info["currency"], t_year)
+                
+                row_amt = round(q * t_price * t_rate)
+                if ttype in ["IN", "입고"]:
+                    total_all_in_amt += row_amt
+                elif ttype in ["OUT", "출고"]:
+                    total_all_out_amt += row_amt
+        except Exception:
+            pass
+
+        total_all_asset_amt = total_all_in_amt - total_all_out_amt
+
         excel_rows = []
         for item in full_excel_items:
             icode = item.get("item_code")
@@ -863,7 +908,6 @@ if menu == MENU_STOCK:
             rate = get_exchange_rate_by_year(curr, year)
             unit_krw = round(latest_price * rate)
             stock_amt = round(unit_krw * calc_qty)
-            total_all_asset_amt += stock_amt
 
             excel_rows.append({
                 "Lot ID": "-",
@@ -902,10 +946,17 @@ if menu == MENU_STOCK:
         if not is_guest:
             st.markdown(f"<p style='color: #666; font-size: 13px; margin-top: -10px; margin-bottom: 15px;'>📌 현재 페이지(또는 검색결과) 재고 자산 금액: <b>{current_page_asset_amt:,.0f} 원</b></p>", unsafe_allow_html=True)
 
-        col1, col2, _ = st.columns([2, 2, 2])
+        col1, col2 = st.columns([1, 3])
         col1.metric("전체 등록 품목 수", f"{total_count} 개")
+        
         if not is_guest:
-            col2.metric("총 재고 자산 금액", f"{total_all_asset_amt:,.0f} 원")
+            col2.markdown(f"""
+            <div style="background-color: #f1f8e9; border: 1px solid #c5e1a5; border-radius: 8px; padding: 10px 15px; text-align: center; color: #33691e;">
+                <span style="font-size: 14px; font-weight: bold;">총 입고 자산 금액 ({total_all_in_amt:,.0f} 원)</span> - 
+                <span style="font-size: 14px; font-weight: bold;">총 출고 자산 금액 ({total_all_out_amt:,.0f} 원)</span> = 
+                <span style="font-size: 18px; font-weight: 900; color: #b71c1c;">총 재고 자산 금액: {total_all_asset_amt:,.0f} 원</span>
+            </div>
+            """, unsafe_allow_html=True)
         else:
             col2.metric("총 재고 자산 금액", "🔒 (비공개)")
 
@@ -945,9 +996,9 @@ if menu == MENU_STOCK:
             render_a4_spec_card(item_list[sel_label], is_guest_user=is_guest)
     else:
         st.info("조건에 일치하는 품목 데이터가 없습니다.")
-        
+
 # ---------------------------------------------------------
-# 메뉴 2: 입출고 등록 (게스트 접근 제한)
+# 메뉴 2: 입출고 등록
 # ---------------------------------------------------------
 elif menu == MENU_TRANS:
     if is_guest:
@@ -1209,278 +1260,127 @@ elif menu == MENU_TRANS:
             st.info("선택한 기간 또는 검색 조건에 일치하는 입출고 내역이 없습니다.")
 
 # ---------------------------------------------------------
-# 메뉴 3: 품목 관리 (게스트 접근 제한)
+# 메뉴 3: 품목 관리
 # ---------------------------------------------------------
 elif menu == MENU_ITEMS:
     if is_guest:
         st.error("❌ 게스트 계정은 접근할 수 없는 메뉴입니다.")
         st.stop()
-    st.subheader("🏷️ 품목 등록 및 수정 관리")
-    tab1, tab2, tab3 = st.tabs(["✍️ 개별 직접 등록", "✏️ 기존 품목 수정", "📂 기초 데이터 엑셀 일괄 등록"])
-
-    with tab1:
-        with st.form("new_item_form", clear_on_submit=True):
-            col1, col2, col3 = st.columns(3)
-            item_code = col1.text_input("품목코드 (공란 시 자동 채번)", value="")
-            item_name = col2.text_input("품명 * (*필수)")
-            item_detail_no = col3.text_input("아이템상세번호")
-
-            col4, col5, col6 = st.columns(3)
-            model_spec = col4.text_input("모델번호_규격")
-            category_type = col5.text_input("구분")
-            category_main = col6.text_input("대분류")
-
-            col7, col8, col9 = st.columns(3)
-            category_sub = col7.text_input("소분류")
-            shelf_no = col8.text_input("선반번호")
-            zone = col9.text_input("해당구역")
-
-            col10, col11, col12 = st.columns(3)
-            device_name = col10.text_input("기기명")
-            maker = col11.text_input("Maker")
-            useful_life = col12.text_input("내구연한")
-
-            col13, col14, col15, col16 = st.columns(4)
-            in_date = col13.text_input("입고일", value=str(datetime.date.today()))
-            currency = col14.selectbox("화폐", ["KRW", "USD", "EUR", "JPY"])
-            unit_price = col15.number_input("기초 단가 *", min_value=0.0, value=0.0)
-            initial_qty = col16.number_input("초기 수량 *", min_value=0, value=0, step=1, format="%d")
-
-            remark = st.text_input("비고")
-            img_file = st.file_uploader("품목 사진 첨부", type=["png", "jpg", "jpeg"])
-
-            if st.form_submit_button("신규 품목 및 초기 수량 저장"):
-                if not item_name.strip():
-                    st.error("❌ 품명은 필수 입력 항목입니다.")
-                else:
-                    with st.spinner("⏳ 데이터 저장 중..."):
-                        code_input = str(item_code).strip() if item_code else ""
-                        if code_input and code_input.lower() not in ["nan", "null", "none", "", "-"]:
-                            final_code = code_input
-                        else:
-                            final_code = generate_next_item_code()
-
-                        photo_url = db.upload_item_image(img_file, final_code) if img_file else None
-                        
-                        item_data = {
-                            "item_code": final_code,
-                            "item_name": safe_str_clean(item_name),
-                            "item_detail_no": safe_str_clean(item_detail_no),
-                            "model_spec": safe_str_clean(model_spec),
-                            "category_type": safe_str_clean(category_type),
-                            "category_main": safe_str_clean(category_main),
-                            "category_sub": safe_str_clean(category_sub),
-                            "shelf_no": safe_str_clean(shelf_no),
-                            "zone": safe_str_clean(zone),
-                            "device_name": safe_str_clean(device_name),
-                            "maker": safe_str_clean(maker),
-                            "useful_life": safe_str_clean(useful_life),
-                            "in_date": clean_date(in_date),
-                            "currency": currency,
-                            "unit_price": float(unit_price),
-                            "remark": safe_str_clean(remark)
-                        }
-                        if photo_url: 
-                            item_data["photo_url"] = photo_url
-                        
-                        try:
-                            db.supabase.table("items").insert(item_data).execute()
-                            if initial_qty > 0:
-                                current_user_str = f"{user['name']}"
-                                db.register_inbound_lot(
-                                    item_code=final_code, item_name=safe_str_clean(item_name),
-                                    category=safe_str_clean(category_type, "일반"),
-                                    inbound_date=clean_date(in_date), unit_price=float(unit_price),
-                                    quantity=int(initial_qty), manager=current_user_str,
-                                    requester="-", remark=safe_str_clean(remark, "-")
-                                )
-                            st.success(f"🎉 신규 품목 [{final_code}] 및 기초 재고 등록 완료!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"등록 중 오류 발생: {e}")
-
-    with tab2:
-        edit_search = st.text_input("🔍 수정할 품목 검색 (품명, 코드, 규격 등)", "", key="edit_search_box")
         
-        try:
-            all_edit_items = []
-            chunk_size = 1000
-            start = 0
-            while True:
-                resp = db.supabase.table("items").select("*").order("item_code", desc=False).range(start, start + chunk_size - 1).execute()
-                c_data = resp.data or []
-                all_edit_items.extend(c_data)
-                if len(c_data) < chunk_size:
-                    break
-                start += chunk_size
-        except Exception:
-            all_edit_items = []
-
-        if edit_search.strip():
-            kw = edit_search.strip().lower()
-            filtered_edit_items = []
-            for item in all_edit_items:
-                if (kw in str(item.get("item_code", "")).lower() or
-                    kw in str(item.get("item_name", "")).lower() or
-                    kw in str(item.get("model_spec", "")).lower() or
-                    kw in str(item.get("item_detail_no", "")).lower() or
-                    kw in str(item.get("remark", "")).lower()):
-                    filtered_edit_items.append(item)
-        else:
-            PAGE_SIZE_EDIT = 100
-            total_edit_pages = max(1, math.ceil(len(all_edit_items) / PAGE_SIZE_EDIT))
-            selected_edit_page = 1
-            if total_edit_pages > 1:
-                col_ep1, _ = st.columns([1, 4])
-                with col_ep1:
-                    selected_edit_page = st.selectbox("📄 수정할 품목 페이지 선택 (100건씩)", list(range(1, total_edit_pages + 1)), format_func=lambda x: f"{x} 페이지 (총 {total_edit_pages}페이지)", key="edit_page_select")
-            start_e_idx = (selected_edit_page - 1) * PAGE_SIZE_EDIT
-            end_e_idx = start_e_idx + PAGE_SIZE_EDIT
-            filtered_edit_items = all_edit_items[start_e_idx:end_e_idx]
-
-        if filtered_edit_items:
-            edit_opts = {f"[{i['item_code']}] {i['item_name']}": i for i in filtered_edit_items}
-            sel_edit = st.selectbox("수정할 품목 선택:", list(edit_opts.keys()))
-            t = edit_opts[sel_edit]
-            target_icode = t["item_code"]
-
-            current_initial_qty = 0
-            try:
-                trans_check = db.supabase.table("stock_transactions").select("quantity").eq("item_code", target_icode).in_("trans_type", ["IN", "입고"]).order("id", desc=False).limit(1).execute()
-                if trans_check.data:
-                    current_initial_qty = safe_int_clean(trans_check.data[0].get("quantity"), 0)
-            except Exception:
-                pass
-
-            existing_photo = t.get("photo_url")
-            if existing_photo:
-                st.image(existing_photo, width=150, caption="현재 등록된 사진")
-            else:
-                st.caption("현재 등록된 사진 없음")
-
-            with st.form("edit_item_form"):
-                col1, col2, col3 = st.columns(3)
-                e_name = col1.text_input("품명 *", value=safe_str_clean(t.get("item_name")))
-                e_detail = col2.text_input("아이템상세번호", value=safe_str_clean(t.get("item_detail_no")))
-                e_spec = col3.text_input("규격", value=safe_str_clean(t.get("model_spec")))
-
-                col4, col5, col6 = st.columns(3)
-                e_type = col4.text_input("구분", value=safe_str_clean(t.get("category_type")))
-                e_main = col5.text_input("대분류", value=safe_str_clean(t.get("category_main")))
-                e_sub = col6.text_input("소분류", value=safe_str_clean(t.get("category_sub")))
-
-                col7, col8, col9 = st.columns(3)
-                e_shelf = col7.text_input("선반번호", value=safe_str_clean(t.get("shelf_no")))
-                e_price = col8.number_input("단가", value=safe_float(t.get("unit_price")))
-                
-                curr_list = ["KRW", "USD", "EUR", "JPY"]
-                e_curr = col9.selectbox("화폐", curr_list, index=curr_list.index(t.get("currency", "KRW")) if t.get("currency") in curr_list else 0)
-
-                col10, col11 = st.columns(2)
-                e_initial_qty = col10.number_input("초기 재고 수량 (수정 가능)", min_value=0, value=current_initial_qty, step=1, format="%d")
-                e_remark = col11.text_input("비고", value=safe_str_clean(t.get("remark")))
-                
-                edit_img_file = st.file_uploader("품목 사진 수정/교체 (새 사진 첨부 시 기존 사진 덮어쓰기)", type=["png", "jpg", "jpeg"], key="edit_img_file")
-
-                if st.form_submit_button("품목 정보 및 초기 수량 수정 완료"):
-                    new_photo_url = db.upload_item_image(edit_img_file, target_icode) if edit_img_file else t.get("photo_url")
-
-                    update_payload = {
-                        "item_name": safe_str_clean(e_name),
-                        "item_detail_no": safe_str_clean(e_detail),
-                        "model_spec": safe_str_clean(e_spec),
-                        "category_type": safe_str_clean(e_type),
-                        "category_main": safe_str_clean(e_main),
-                        "category_sub": safe_str_clean(e_sub),
-                        "shelf_no": safe_str_clean(e_shelf),
-                        "unit_price": float(e_price),
-                        "currency": e_curr,
-                        "remark": safe_str_clean(e_remark)
+    st.subheader("🏷️ 자재 품목 마스터 관리")
+    st.caption("💡 새로운 자재 품목을 등록하거나 기존 품목 정보를 수정·삭제합니다.")
+    
+    tab_add, tab_edit = st.tabs(["➕ 신규 품목 등록", "✏️ 기존 품목 수정/삭제"])
+    
+    with tab_add:
+        with st.form("new_item_form"):
+            new_code = st.text_input("품목코드 (자동생성 추천)", value=generate_next_item_code())
+            c_i1, c_i2 = st.columns(2)
+            new_name = c_i1.text_input("품명 (*필수)")
+            new_detail_no = c_i2.text_input("상세번호 (Part No 등)")
+            
+            c_i3, c_i4 = st.columns(2)
+            new_model = c_i3.text_input("규격 / 모델")
+            new_cat_type = c_i4.selectbox("구분", ["전기", "기계", "소방", "기타"])
+            
+            c_i5, c_i6, c_i7 = st.columns(3)
+            new_cat_main = c_i5.text_input("대분류")
+            new_cat_sub = c_i6.text_input("소분류")
+            new_shelf = c_i7.text_input("선반 번호")
+            
+            c_i8, c_i9 = st.columns(2)
+            new_zone = c_i8.text_input("설치 구역 (Zone)")
+            new_device = c_i9.text_input("설치 기기명")
+            
+            c_i10, c_i11, c_i12 = st.columns(3)
+            new_maker = c_i10.text_input("Maker (제조사)")
+            new_curr = c_i11.selectbox("화폐 단위", ["KRW", "USD", "EUR", "JPY", "CNY"])
+            new_price = c_i12.number_input("단가", min_value=0.0, value=0.0, step=100.0)
+            
+            c_i13, c_i14 = st.columns(2)
+            new_indate = c_i13.date_input("최초 입고일", value=datetime.date.today())
+            new_photo = c_i14.text_input("사진 URL (선택)")
+            
+            new_remark = st.text_input("비고")
+            
+            submitted_item = st.form_submit_button("신규 품목 등록하기")
+            
+            if submitted_item:
+                if not new_name.strip():
+                    st.error("품명은 필수 입력 항목입니다.")
+                else:
+                    payload = {
+                        "item_code": new_code.strip(),
+                        "item_name": new_name.strip(),
+                        "item_detail_no": new_detail_no.strip(),
+                        "model_spec": new_model.strip(),
+                        "category_type": new_cat_type,
+                        "category_main": new_cat_main.strip(),
+                        "category_sub": new_cat_sub.strip(),
+                        "shelf_no": new_shelf.strip(),
+                        "zone": new_zone.strip(),
+                        "device_name": new_device.strip(),
+                        "maker": new_maker.strip(),
+                        "currency": new_curr,
+                        "unit_price": float(new_price),
+                        "in_date": str(new_indate),
+                        "photo_url": new_photo.strip() if new_photo.strip() else None,
+                        "remark": new_remark.strip()
                     }
-                    if new_photo_url:
-                        update_payload["photo_url"] = new_photo_url
-
-                    db.supabase.table("items").update(update_payload).eq("item_code", target_icode).execute()
-
                     try:
-                        trans_resp = db.supabase.table("stock_transactions").select("id").eq("item_code", target_icode).in_("trans_type", ["IN", "입고"]).order("id", desc=False).limit(1).execute()
-                        if trans_resp.data:
-                            first_trans_id = trans_resp.data[0].get("id")
-                            db.supabase.table("stock_transactions").update({"quantity": int(e_initial_qty), "unit_price": float(e_price)}).eq("id", first_trans_id).execute()
-                        else:
-                            if e_initial_qty > 0:
-                                db.supabase.table("stock_transactions").insert({
-                                    "item_code": target_icode,
-                                    "trans_type": "IN",
-                                    "quantity": int(e_initial_qty),
-                                    "unit_price": float(e_price),
-                                    "trans_date": clean_date(t.get("in_date")),
-                                    "requester": "-",
-                                    "manager": f"{user['name']}",
-                                    "remark": "기초재고 일괄등록"
-                                }).execute()
-                    except Exception as ex:
-                        st.warning(f"트랜잭션 수량 동기화 경고: {ex}")
-
-                    st.success("✅ 품목 정보, 사진 및 초기 재고 수량이 성공적으로 수정되었습니다!")
-                    st.rerun()
-
-    with tab3:
-        st.markdown("#### 📂 기초 데이터 엑셀 일괄 등록")
-        uploaded_excel = st.file_uploader("엑셀 파일 선택 (.xlsx)", type=["xlsx"])
-        if uploaded_excel and st.button("🚀 기초 데이터 초고속 일괄 세팅 실행"):
-            with st.spinner("⏳ 대량 등록 중..."):
-                try:
-                    df_up = pd.read_excel(uploaded_excel, dtype=str)
-                    items_payloads = []
-                    trans_payloads = []
-                    current_user_str = f"{user['name']}"
-
-                    for _, r in df_up.iterrows():
-                        i_name = safe_str_clean(r.get("item_name"))
-                        if not i_name or i_name == "-":
-                            continue
-                        i_code = safe_str_clean(r.get("item_code"))
-                        if not i_code or i_code == "-":
-                            i_code = generate_next_item_code()
-
-                        u_price = safe_float(r.get("unit_price"), 0.0)
-                        init_qty = safe_int_clean(r.get("initial_quantity"), 0)
-                        in_d = clean_date(r.get("in_date"))
-                        r_remark = safe_str_clean(r.get("remark"), "기초 재고 엑셀 일괄 세팅")
-
-                        items_payloads.append({
-                            "item_code": i_code, "item_name": i_name,
-                            "item_detail_no": safe_str_clean(r.get("item_detail_no")),
-                            "model_spec": safe_str_clean(r.get("model_spec")),
-                            "category_type": safe_str_clean(r.get("category_type")),
-                            "category_main": safe_str_clean(r.get("category_main")),
-                            "category_sub": safe_str_clean(r.get("category_sub")),
-                            "shelf_no": safe_str_clean(r.get("shelf_no")),
-                            "zone": safe_str_clean(r.get("zone")),
-                            "device_name": safe_str_clean(r.get("device_name")),
-                            "maker": safe_str_clean(r.get("maker")),
-                            "useful_life": safe_str_clean(r.get("useful_life")),
-                            "in_date": in_d, "currency": safe_str_clean(r.get("currency"), "KRW"),
-                            "unit_price": u_price, "remark": r_remark
-                        })
-
-                        if init_qty > 0:
-                            trans_payloads.append({
-                                "item_code": i_code, "trans_type": "IN", "quantity": init_qty,
-                                "unit_price": u_price, "trans_date": in_d, "requester": "-",
-                                "manager": current_user_str, "remark": r_remark
-                            })
-
-                    if items_payloads:
-                        db.supabase.table("items").upsert(items_payloads).execute()
-                        if trans_payloads:
-                            db.supabase.table("stock_transactions").insert(trans_payloads).execute()
-                        st.success(f"🎉 총 {len(items_payloads)}개 품목 기초 데이터 세팅 완료!")
+                        db.supabase.table("items").insert(payload).execute()
+                        st.success(f"✅ 신규 품목 [{new_code}]이 성공적으로 등록되었습니다!")
                         st.rerun()
-                except Exception as e:
-                    st.error(f"오류 발생: {e}")
+                    except Exception as e:
+                        st.error(f"❌ 등록 실패: {e}")
 
+    with tab_edit:
+        st.info("💡 수정 또는 삭제할 품목을 선택하세요.")
+        try:
+            items_resp = db.supabase.table("items").select("*").order("item_code").execute()
+            all_items_master = items_resp.data or []
+        except:
+            all_items_master = []
+            
+        if all_items_master:
+            master_opts = {f"[{i['item_code']}] {i['item_name']} (규격: {i.get('model_spec', '-')})": i for i in all_items_master}
+            sel_master_label = st.selectbox("관리할 품목 선택", list(master_opts.keys()))
+            target_item_obj = master_opts[sel_master_label]
+            
+            with st.form("edit_item_form"):
+                e_name = st.text_input("품명", value=target_item_obj.get("item_name", ""))
+                e_detail = st.text_input("상세번호", value=target_item_obj.get("item_detail_no", ""))
+                e_model = st.text_input("규격/모델", value=target_item_obj.get("model_spec", ""))
+                e_maker = st.text_input("Maker", value=target_item_obj.get("maker", ""))
+                e_price = st.number_input("단가", value=safe_float(target_item_obj.get("unit_price"), 0.0))
+                e_remark = st.text_input("비고", value=target_item_obj.get("remark", ""))
+                
+                col_btn1, col_btn2 = st.columns(2)
+                update_btn = col_btn1.form_submit_button("정보 수정 저장")
+                delete_btn = col_btn2.form_submit_button("품목 삭제")
+                
+                if update_btn:
+                    try:
+                        db.supabase.table("items").update({
+                            "item_name": e_name,
+                            "item_detail_no": e_detail,
+                            "model_spec": e_model,
+                            "maker": e_maker,
+                            "unit_price": e_price,
+                            "remark": e_remark
+                        }).eq("item_code", target_item_obj["item_code"]).execute()
+                        st.success("✅ 품목 정보가 수정되었습니다.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ 수정 실패: {e}")
+                        
+                if delete_btn:
+                    try:
+                        db.supabase.table("items").delete().eq("item_code", target_item_obj["item_code"]).execute()
+                        st.success("🗑️ 품목이 삭제되었습니다.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ 삭제 실패: {e}")
 
 # ---------------------------------------------------------
 # 메뉴 4: 품목별 입출고 집계 및 이력 조회 (기존 유지)
