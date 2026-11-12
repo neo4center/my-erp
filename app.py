@@ -845,7 +845,6 @@ if menu == MENU_STOCK:
         except Exception:
             full_excel_items = all_items
 
-        # 전체 입고 금액 및 출고 금액 계산 로직 추가
         total_all_in_amt = 0
         total_all_out_amt = 0
         try:
@@ -860,7 +859,6 @@ if menu == MENU_STOCK:
                     break
                 start += chunk_size
 
-            # 아이템별 최신 단가 및 환율 맵핑용 사전 준비
             item_info_master_map = {}
             for itm in full_excel_items:
                 ic = itm.get("item_code")
@@ -870,7 +868,6 @@ if menu == MENU_STOCK:
                     "base_date": clean_date(itm.get("in_date", str(datetime.date.today())))
                 }
 
-            # 트랜잭션을 순회하며 전체 입고 자산 금액과 출고 자산 금액 합산
             for t in full_trans_resp:
                 ic = t.get("item_code")
                 if not ic or ic not in item_info_master_map:
@@ -1720,8 +1717,48 @@ elif menu == MENU_HISTORY:
         if summary_rows:
             df_summary = pd.DataFrame(summary_rows)
 
-            st.markdown("### 📦 품목별 입출고 집계 요약 (출고 1개 이상 품목)")
+            # 선택 기간 내 총 출고 자산 금액 계산
+            total_period_out_amt = 0
+            if not is_guest:
+                for t in filtered_trans_data:
+                    t_type = str(t.get("trans_type", "")).strip().upper()
+                    if t_type in ["OUT", "출고"]:
+                        icode = str(t.get("item_code", "-")).strip().upper()
+                        info = item_info_map.get(icode, {"currency": "KRW", "unit_price": 0.0})
+                        t_price = safe_float(t.get("unit_price"), info["unit_price"])
+                        t_date = clean_date(t.get("trans_date", ""))
+                        t_year = get_year_from_date(t_date)
+                        t_rate = get_exchange_rate_by_year(info["currency"], t_year)
+                        q = safe_int_clean(t.get("quantity"), 0)
+                        total_period_out_amt += round(q * t_price * t_rate)
+
+            # 상단 헤더 영역 구성 (타이틀과 총 출고 자산 금액을 나란히 배치)
+            col_h1, col_h2 = st.columns([3, 2])
+            with col_h1:
+                st.markdown("### 📦 품목별 입출고 집계 요약 (출고 1개 이상 품목)")
+            with col_h2:
+                if not is_guest:
+                    st.markdown(f"""
+                    <div style="background-color: #ffebee; border: 1px solid #ef9a9a; border-radius: 8px; padding: 6px 12px; text-align: right; color: #b71c1c; font-size: 14px; font-weight: bold;">
+                        <span>기간 내 총 출고 자산 금액: {total_period_out_amt:,.0f} 원</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+
             st.markdown("---")
+
+            # 1. 품목별 입출고 집계 요약 엑셀 다운로드 버튼 (독립 배치)
+            out_summary_excel = io.BytesIO()
+            with pd.ExcelWriter(out_summary_excel, engine="openpyxl") as writer:
+                df_summary.to_excel(writer, index=False, sheet_name="입출고집계요약")
+
+            col_dl1, _ = st.columns([1, 2])
+            with col_dl1:
+                st.download_button(
+                    label="📥 품목별 집계 요약 엑셀 다운로드 (.xlsx)",
+                    data=out_summary_excel.getvalue(),
+                    file_name=f"ERP_입출고집계요약_{start_date_filter}~{end_date_filter}.xlsx",
+                    use_container_width=True
+                )
 
             df_summary_display = df_summary.copy()
             df_summary_display["총재고"] = df_summary_display["총재고"].apply(lambda x: f"{x:,} 개")
@@ -1770,11 +1807,10 @@ elif menu == MENU_HISTORY:
                 if not df_summary.empty:
                     selected_icodes.append(df_summary.iloc[0]["품목코드"])
 
+            # 2. 선택한 품목별 상세 입출고 이력 엑셀 다운로드 버튼 (독립 배치)
             if sel_rows:
                 out_multi_excel = io.BytesIO()
                 with pd.ExcelWriter(out_multi_excel, engine="openpyxl") as writer:
-                    df_summary.to_excel(writer, index=False, sheet_name="입출고집계요약")
-                    
                     for s_icode in selected_icodes:
                         s_summary = item_summary_map.get(str(s_icode).strip().upper(), None)
                         if s_summary and s_summary["상세내역"]:
